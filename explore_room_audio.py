@@ -42,6 +42,7 @@ import math
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
+from pprint import pprint
 
 import numpy as np
 import matplotlib
@@ -190,6 +191,17 @@ def discover(root):
                 print(f"WARNING: skipping {gdir} (expected exactly one *_A.wav and one *_B.wav)")
                 continue
             found += [(cat, gid, dev, files[dev][0]) for dev in ("A", "B")]
+    
+    # fake extra "gone" pairs to compare one environment to another
+    found += [('gone', 10, 'A', found[0][3])]
+    found += [('gone', 10, 'B', found[5][3])]
+
+    found += [('gone', 11, 'A', found[6][3])]
+    found += [('gone', 11, 'B', found[1][3])]
+
+    found += [('gone', 12, 'A', found[2][3])]
+    found += [('gone', 12, 'B', found[7][3])]
+
     return found
 
 
