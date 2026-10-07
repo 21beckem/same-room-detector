@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import sys
+import time
 from itertools import combinations
 from pathlib import Path
 
@@ -107,6 +108,8 @@ def main():
     parser.add_argument("--all-pairs", action="store_true", help="score every pair")
     parser.add_argument("--pair-limit", type=int, default=4,
                         help="maximum representative pairs to score (use --all-pairs for every pair)")
+    parser.add_argument("--timings-output", type=Path,
+                        help="also write per-stage timing data as JSON")
     args = parser.parse_args()
 
     with MODEL_PATH.open() as fh:
@@ -114,7 +117,17 @@ def main():
     targets = model["targets"]
     paths = sorted(DATASET.rglob("*.wav"))
     items = [item_from_path(path) for path in paths]
-    clips = {item["path"]: co.make_clip(co.load_audio(DATASET / item["path"])) for item in items}
+    started = time.perf_counter()
+    load_audio_ms = []
+    make_clip_ms = []
+    clips = {}
+    for item in items:
+        t0 = time.perf_counter()
+        audio = co.load_audio(DATASET / item["path"])
+        load_audio_ms.append((time.perf_counter() - t0) * 1000)
+        t0 = time.perf_counter()
+        clips[item["path"]] = co.make_clip(audio)
+        make_clip_ms.append((time.perf_counter() - t0) * 1000)
 
     clip_outputs = []
     for item in items:
@@ -141,10 +154,16 @@ def main():
 
     cv = co.load_cv_scores(MODEL_PATH)
     pair_outputs = []
+    pair_windows_ms = []
+    score_clips_ms = []
     for item_a, item_b in selected_pairs:
         clip_a, clip_b = clips[item_a["path"]], clips[item_b["path"]]
-        result = co.score_clips(model, clip_a, clip_b)
+        t0 = time.perf_counter()
         windows = pair_windows(clip_a, clip_b, model)
+        pair_windows_ms.append((time.perf_counter() - t0) * 1000)
+        t0 = time.perf_counter()
+        result = co.score_clips(model, clip_a, clip_b)
+        score_clips_ms.append((time.perf_counter() - t0) * 1000)
         target, why = co.pair_truth(item_a["cat"], item_a["gid"], item_b["cat"], item_b["gid"], targets)
         pair_outputs.append({
             "a": item_a["label"],
@@ -190,6 +209,22 @@ def main():
     with args.output.open("w", newline="\n") as fh:
         json.dump(output, fh, indent=2, sort_keys=True, allow_nan=False)
         fh.write("\n")
+    timing_output = {
+        "implementation": "python-colocation-reference",
+        "files": len(items),
+        "pairs": len(selected_pairs),
+        "load_audio_ms": load_audio_ms,
+        "make_clip_ms": make_clip_ms,
+        "pair_windows_ms": pair_windows_ms,
+        "score_clips_ms": score_clips_ms,
+        "total_ms": (time.perf_counter() - started) * 1000,
+    }
+    if args.timings_output:
+        args.timings_output.parent.mkdir(parents=True, exist_ok=True)
+        with args.timings_output.open("w", newline="\n") as fh:
+            json.dump(timing_output, fh, indent=2)
+            fh.write("\n")
+    print("Timing (ms): " + json.dumps(timing_output, separators=(",", ":")))
     print(f"Wrote {args.output} ({len(items)} files, {len(selected_pairs)} pairs)")
 
 

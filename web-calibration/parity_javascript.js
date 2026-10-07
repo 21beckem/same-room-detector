@@ -15,6 +15,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { performance } = require("perf_hooks");
 
 const ROOT = path.resolve(__dirname, "..");
 const DATASET = path.join(ROOT, "data-exploration", "room-audio-recordings");
@@ -483,11 +484,20 @@ function lookupCv(cv, a, b) { const ka = a.split("/").slice(0, 2).join("/"), kb 
 function pairTruth(a, b, targets) { return a.cat === b.cat && a.gid === b.gid ? [targets[a.cat], `same group (${a.cat}), target ${targets[a.cat].toFixed(2)}`] : [0, "different groups, target 0.00"]; }
 
 function outputFor(args) {
+  const started = performance.now();
   const model = JSON.parse(fs.readFileSync(MODEL_PATH, "utf8"));
   const paths = discoverFiles();
   const items = paths.map(itemFromPath);
   const clips = new Map();
-  for (const item of items) clips.set(item.path, makeClip(loadAudio(path.join(DATASET, ...item.path.split("/")))));
+  const loadAudioMs = [], makeClipMs = [];
+  for (const item of items) {
+    let t0 = performance.now();
+    const audio = loadAudio(path.join(DATASET, ...item.path.split("/")));
+    loadAudioMs.push(performance.now() - t0);
+    t0 = performance.now();
+    clips.set(item.path, makeClip(audio));
+    makeClipMs.push(performance.now() - t0);
+  }
   const files = items.map((item) => {
     const clip = clips.get(item.path);
     return { ...item, audio: arraySummary(clip.x, [clip.x.length]), mel_db: arraySummary(clip.melDb, [clip.melDb.length, clip.melDb[0].length]), flux: arraySummary(clip.flux, [clip.flux.length]), rms_dbfs: clip.rmsDbfs, activity_db: clip.activityDb };
@@ -501,24 +511,35 @@ function outputFor(args) {
     selected = within.concat(cross.slice(0, 5), cross.slice(Math.floor(cross.length / 2), Math.floor(cross.length / 2) + 5), cross.slice(-5)).slice(0, args.pairLimit);
   }
   const cv = parseCv();
+  const pairWindowsMs = [], scoreClipsMs = [];
   const pairs = selected.map(([a, b]) => {
     const ca = clips.get(a.path), cb = clips.get(b.path);
+    let t0 = performance.now();
     const windows = windowPlan(Math.min(ca.x.length, cb.x.length), model.config).map(([start, length]) => {
       const features = windowFeatures(segment(ca, start, length), segment(cb, start, length), model.config.max_lag);
       const vector = featureVector(features), logit = modelLogits(model, [vector])[0];
       return { start, length, features, feature_vector: vector, logit, score: expit(logit) };
     });
+    pairWindowsMs.push(performance.now() - t0);
     const [target, description] = pairTruth(a, b, model.targets);
-    return { a: a.label, b: b.label, path_a: a.path, path_b: b.path, truth: { target, description }, held_out: lookupCv(cv, a.label, b.label), windows, result: scoreClips(model, ca, cb) };
+    t0 = performance.now();
+    const result = scoreClips(model, ca, cb);
+    scoreClipsMs.push(performance.now() - t0);
+    return { a: a.label, b: b.label, path_a: a.path, path_b: b.path, truth: { target, description }, held_out: lookupCv(cv, a.label, b.label), windows, result };
   });
   const plans = {};
   for (const n of [8 * SR, 12 * SR, 20 * SR, 320000]) plans[String(n)] = windowPlan(n, model.config);
-  return {
+  return { output: {
     format: "same-room-parity-v1", implementation: "parity-reference", model_path: "model_output/model.json", model,
     constants: { SR, N_FFT, HOP, FRAME_RATE, N_MELS, FMIN, FMAX, MAX_SEC }, files, pairs,
     pair_count_available: allPairs.length, pair_count_scored: selected.length,
     helpers: { band_labels: Object.fromEntries([-0.1, 0, 0.249999, 0.25, 0.749999, 0.75, 1].map((v) => [String(v), bandLabel(v)])), window_plans: plans },
-  };
+  }, timing: {
+    implementation: "javascript-reimplementation", files: items.length, pairs: selected.length,
+    load_audio_ms: loadAudioMs, make_clip_ms: makeClipMs,
+    pair_windows_ms: pairWindowsMs, score_clips_ms: scoreClipsMs,
+    total_ms: performance.now() - started,
+  }};
 }
 
 function compareValues(a, b, location = "$", result = { exact: 0, mismatches: [], maxAbs: 0, maxRel: 0 }) {
@@ -540,14 +561,18 @@ function compareValues(a, b, location = "$", result = { exact: 0, mismatches: []
 }
 
 function main() {
-  const args = { output: path.join(__dirname, "javascript-output.json"), compare: null, allPairs: process.argv.includes("--all-pairs"), pairLimit: 4 };
+  const args = { output: path.join(__dirname, "javascript-output.json"), compare: null, timingsOutput: null, allPairs: process.argv.includes("--all-pairs"), pairLimit: 4 };
   for (let i = 2; i < process.argv.length; i += 1) {
     if (process.argv[i] === "--output") args.output = path.resolve(process.argv[++i]);
     if (process.argv[i] === "--compare") args.compare = path.resolve(process.argv[++i]);
+    if (process.argv[i] === "--timings-output") args.timingsOutput = path.resolve(process.argv[++i]);
     if (process.argv[i] === "--pair-limit") args.pairLimit = Number(process.argv[++i]);
   }
-  const output = outputFor(args);
+  const generated = outputFor(args);
+  const output = generated.output;
   fs.writeFileSync(args.output, JSON.stringify(output, null, 2) + "\n");
+  if (args.timingsOutput) fs.writeFileSync(args.timingsOutput, JSON.stringify(generated.timing, null, 2) + "\n");
+  console.log(`Timing (ms): ${JSON.stringify(generated.timing)}`);
   console.log(`Wrote ${args.output} (${output.files.length} files, ${output.pairs.length} pairs)`);
   if (args.compare) {
     const pythonOutput = JSON.parse(fs.readFileSync(args.compare, "utf8"));
