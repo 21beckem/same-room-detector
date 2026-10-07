@@ -1,0 +1,15 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; }
+body { margin: 0; color: #202124; background: #f7f7f8; }
+main { width: min(760px, calc(100% - 32px)); margin: 48px auto; }
+h1 { font-size: 1.35rem; font-weight: 600; margin-bottom: 24px; }
+.controls { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+label { display: grid; gap: 6px; font-size: .85rem; color: #555; }
+select, button { min-height: 38px; border: 1px solid #bbb; border-radius: 5px; background: white; padding: 0 10px; font: inherit; }
+button { cursor: pointer; background: #202124; color: white; border-color: #202124; }
+button:disabled, select:disabled { cursor: not-allowed; opacity: .55; }
+#status { min-height: 1.5em; color: #666; }
+#result { margin-top: 20px; padding: 18px; background: white; border: 1px solid #ddd; border-radius: 6px; line-height: 1.55; }
+.score { font-size: 1.5rem; font-weight: 650; margin: 8px 0; }
+.good { color: #147a3d; } .bad { color: #b3261e; } .warn { color: #986b00; }
+.muted { color: #666; } .result-row { margin: 5px 0; }
+@media (max-width: 650px) { .controls { grid-template-columns: 1fr; } button { width: 100%; } }

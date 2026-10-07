@@ -1,0 +1,7 @@
+{
+  "name": "same-room-web-wasm-demo",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  }
+}

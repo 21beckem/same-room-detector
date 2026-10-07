@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Same-room audio comparison</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main>
+      <h1>Same-room audio comparison</h1>
+      <div class="controls">
+        <label>Recording A<select id="recording-a" disabled></select></label>
+        <label>Recording B<select id="recording-b" disabled></select></label>
+        <button id="compare" disabled>Compare</button>
+      </div>
+      <p id="status" role="status">Loading recordings and model…</p>
+      <section id="result" hidden aria-live="polite"></section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
