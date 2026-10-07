@@ -3,7 +3,7 @@
 evaluate_all_pairs.py - brute-force test: score EVERY pair of recordings, report accuracy.
 
     python3 evaluate_all_pairs.py
-    python3 evaluate_all_pairs.py --root room-audio-recordings --model model_output/model.json --out eval_output
+    python3 evaluate_all_pairs.py --root room-audio-recordings --model ../model_output/model.json --out eval_output
 
 Ground truth comes from the folders: the A/B files of one group get that category's target
 (close=1, apart=0.5, gone=0 by default); any two files from different groups are 0.
@@ -96,7 +96,7 @@ def plot_matrix(items, rows, path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default="room-audio-recordings")
-    ap.add_argument("--model", default="model_output/model.json")
+    ap.add_argument("--model", default="../model_output/model.json")
     ap.add_argument("--out", default="eval_output")
     args = ap.parse_args()
 

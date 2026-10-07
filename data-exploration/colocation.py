@@ -7,11 +7,11 @@ Two commands:
   train   Build a model from your labelled recordings folder, run leave-one-group-out
           cross-validation, and write model.json + reports + plots.
 
-              python3 colocation.py train room-audio-recordings --out model_output
+              python3 colocation.py train room-audio-recordings --out ../model_output
 
   score   Score two WAV files with a trained model.
 
-              python3 colocation.py score model_output/model.json a.wav b.wav
+              python3 colocation.py score ../model_output/model.json a.wav b.wav
 
 Score meaning:  ~1.0 = close (like your <= 3 ft recordings)
                 ~0.5 = middle (like your 15-20 ft "apart" recording)
@@ -652,7 +652,7 @@ def main():
 
     tr = sub.add_parser("train", help="train a model from a labelled recordings folder")
     tr.add_argument("root", nargs="?", default="room-audio-recordings")
-    tr.add_argument("--out", default="model_output")
+    tr.add_argument("--out", default="../model_output")
     tr.add_argument("--targets", default="", help="e.g. close=1,apart=0.5,near=0.8,gone=0")
     tr.add_argument("--window-sec", type=float, default=DEFAULT_CONFIG["window_sec"])
     tr.add_argument("--hop-sec", type=float, default=DEFAULT_CONFIG["hop_sec"])

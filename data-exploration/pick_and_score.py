@@ -3,7 +3,7 @@
 pick_and_score.py - terminal UI: pick two recordings, see the co-location score.
 
     python3 pick_and_score.py
-    python3 pick_and_score.py --root room-audio-recordings --model model_output/model.json
+    python3 pick_and_score.py --root room-audio-recordings --model ../model_output/model.json
 
 Keys:  Up/Down (or k/j) move    PgUp/PgDn/Home/End jump
        Enter or Space  select (pick two; the second pick scores the pair)
@@ -175,7 +175,7 @@ def run(stdscr, items, model, cv, targets):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default="room-audio-recordings")
-    ap.add_argument("--model", default="model_output/model.json")
+    ap.add_argument("--model", default="../model_output/model.json")
     args = ap.parse_args()
 
     if not Path(args.model).exists():
