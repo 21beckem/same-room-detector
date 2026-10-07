@@ -3,7 +3,7 @@
 
 Run from the repository root:
 
-    venv\\Scripts\\python.exe web-calibration\\parity_python.py
+    venv\\Scripts\\python.exe web-calibration\\py_parity\\parity_python.py
 
 The output is intentionally machine-readable JSON. It exercises the functions
 used by pick_and_score.py and records intermediate clip and pair results so a
@@ -21,7 +21,17 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
+def find_project_root(start):
+    current = Path(start).resolve()
+    while True:
+        if (current / "model_output" / "model.json").exists() and (current / "data-exploration").is_dir():
+            return current
+        if current.parent == current:
+            raise RuntimeError("Could not locate project root")
+        current = current.parent
+
+
+ROOT = find_project_root(Path(__file__).parent)
 DATASET = ROOT / "data-exploration" / "room-audio-recordings"
 MODEL_PATH = ROOT / "model_output" / "model.json"
 sys.path.insert(0, str(ROOT / "data-exploration"))
@@ -104,7 +114,7 @@ def pair_windows(a_clip, b_clip, model):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=ROOT / "web-calibration" / "python-output.json")
+    parser.add_argument("--output", type=Path, default=ROOT / "web-calibration" / "py_parity" / "python-output.json")
     parser.add_argument("--all-pairs", action="store_true", help="score every pair")
     parser.add_argument("--pair-limit", type=int, default=4,
                         help="maximum representative pairs to score (use --all-pairs for every pair)")

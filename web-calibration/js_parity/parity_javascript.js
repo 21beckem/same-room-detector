@@ -4,7 +4,7 @@
  *
  * Run from the repository root:
  *
- *   node web-calibration/parity_javascript.js --compare web-calibration/python-output.json
+ *   node web-calibration/js_parity/parity_javascript.js --compare web-calibration/py_parity/python-output.json
  *
  * This is deliberately a dependency-free Node script. The numerical routines
  * are written so the same implementation can later be moved into browser
@@ -17,7 +17,17 @@ const path = require("path");
 const crypto = require("crypto");
 const { performance } = require("perf_hooks");
 
-const ROOT = path.resolve(__dirname, "..");
+function findProjectRoot(start) {
+  let current = path.resolve(start);
+  while (true) {
+    if (fs.existsSync(path.join(current, "model_output", "model.json")) && fs.existsSync(path.join(current, "data-exploration"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) throw new Error("Could not locate project root");
+    current = parent;
+  }
+}
+
+const ROOT = findProjectRoot(__dirname);
 const DATASET = path.join(ROOT, "data-exploration", "room-audio-recordings");
 const MODEL_PATH = path.join(ROOT, "model_output", "model.json");
 const CV_PATH = path.join(ROOT, "model_output", "cv_pairs.csv");
@@ -582,4 +592,10 @@ function main() {
   }
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = {
+  loadAudio,
+  discoverFiles,
+  itemFromPath,
+};
