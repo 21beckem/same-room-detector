@@ -4,8 +4,11 @@ import { SameRoomAnalyzer } from "./same-room-analyzer.js";
 
 // Change this value to control how often a fresh live comparison is requested.
 const COMPARISON_INTERVAL_MS = 1000;
-const MIN_COMPARISON_SECONDS = 8;
-const MAX_BUFFER_SECONDS = 15;
+// Keep the live scoring input at one trained model window to bound WASM memory.
+const ANALYSIS_WINDOW_SECONDS = 12;
+const MIN_COMPARISON_SECONDS = ANALYSIS_WINDOW_SECONDS;
+// Retain a small margin because capture arrives in whole worklet chunks.
+const MAX_BUFFER_SECONDS = ANALYSIS_WINDOW_SECONDS + 1;
 const RAW_AUDIO_CONSTRAINTS = {
   channelCount: 1,
   sampleRate: { ideal: 48000 },
@@ -153,8 +156,8 @@ async function runComparison() {
   comparisonInFlight = true;
   try {
     const sampleRate = localBuffer.sampleRate;
-    const localAudio = prepareSamples(localBuffer.snapshot(), sampleRate);
-    const remoteAudio = prepareSamples(remoteBuffer.snapshot(), remoteBuffer.sampleRate);
+    const localAudio = prepareSamples(localBuffer.snapshot(ANALYSIS_WINDOW_SECONDS), sampleRate);
+    const remoteAudio = prepareSamples(remoteBuffer.snapshot(ANALYSIS_WINDOW_SECONDS), remoteBuffer.sampleRate);
     const result = await analyzer.compareBuffers(
       localAudio,
       remoteAudio,

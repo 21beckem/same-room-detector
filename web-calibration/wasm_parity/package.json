@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "build:wasm": "asc wasm/same_room.ts --use abort= --exportRuntime --exportTable --runtime stub --optimize --outFile wasm/same_room.wasm --sourceMap",
+    "build:wasm": "asc wasm/same_room.ts --use abort= --exportRuntime --exportTable --runtime minimal --optimize --outFile wasm/same_room.wasm --sourceMap",
     "test:wasm": "node wasm_parity_runner.js"
   },
   "devDependencies": {

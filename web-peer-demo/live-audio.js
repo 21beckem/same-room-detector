@@ -1,4 +1,4 @@
-const MAX_BUFFER_SECONDS = 20;
+const MAX_BUFFER_SECONDS = 12;
 
 export class RollingAudioBuffer {
   constructor(maxSeconds = MAX_BUFFER_SECONDS) {
@@ -24,12 +24,21 @@ export class RollingAudioBuffer {
     return this.sampleRate ? this.totalSamples / this.sampleRate : 0;
   }
 
-  snapshot() {
-    const result = new Float32Array(this.totalSamples);
+  snapshot(maxSeconds = this.maxSeconds) {
+    const sampleCount = Math.min(this.totalSamples, Math.floor(maxSeconds * this.sampleRate));
+    const result = new Float32Array(sampleCount);
+    let skip = this.totalSamples - sampleCount;
     let offset = 0;
     for (const chunk of this.chunks) {
-      result.set(chunk, offset);
-      offset += chunk.length;
+      if (skip >= chunk.length) {
+        skip -= chunk.length;
+        continue;
+      }
+      const start = skip;
+      const visible = chunk.subarray(start);
+      result.set(visible, offset);
+      offset += visible.length;
+      skip = 0;
     }
     return result;
   }

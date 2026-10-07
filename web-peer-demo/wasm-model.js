@@ -27,7 +27,7 @@ export class SameRoomModel {
     );
   }
 
-  static async load({ modelUrl = "./model.json", wasmUrl = "./same_room.wasm" } = {}) {
+  static async load({ modelUrl = "../model_output/model.json", wasmUrl = "../web-calibration/wasm_parity/wasm/same_room.wasm" } = {}) {
     const [modelResponse, wasmResponse] = await Promise.all([fetch(modelUrl), fetch(wasmUrl)]);
     if (!modelResponse.ok) throw new Error(`Could not load model (${modelResponse.status})`);
     if (!wasmResponse.ok) throw new Error(`Could not load WASM (${wasmResponse.status})`);
@@ -46,37 +46,43 @@ export class SameRoomModel {
     }
 
     const started = performance.now();
-    const wasmA = this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, Array.from(a));
-    const wasmB = this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, Array.from(b));
-    this.exports.scoreAudio(wasmA, wasmB);
+    let wasmA = 0;
+    let wasmB = 0;
+    try {
+      wasmA = this.exports.__pin(this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, a));
+      wasmB = this.exports.__pin(this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, b));
+      this.exports.scoreAudio(wasmA, wasmB);
 
-    const flags = this.exports.getQualityFlags();
-    const windowScores = [];
-    for (let i = 0; i < this.exports.getWindowCount(); i += 1) windowScores.push(this.exports.getWindowScore(i));
-    const result = {
-      score: this.exports.getScore(),
-      label: label(this.exports.getLabel()),
-      window_scores: windowScores,
-      features: {
-        gcc_peak: this.exports.getFeature(0),
-        mel_peak: this.exports.getFeature(1),
-        flux_peak: this.exports.getFeature(2),
-      },
-      lags: {
-        gcc: this.exports.getLag(0),
-        mel: this.exports.getLag(1),
-        flux: this.exports.getLag(2),
-      },
-      quality: {
-        ok: flags === 0,
-        notes: qualityNotes(flags, this.model.config.window_sec),
-        level_dbfs: this.exports.getLevel(),
-        activity_db: this.exports.getActivity(),
-      },
-      seconds: this.exports.getSeconds(),
-      wasm_ms: performance.now() - started,
-    };
-    if (typeof this.exports.__collect === "function") this.exports.__collect();
-    return result;
+      const flags = this.exports.getQualityFlags();
+      const windowScores = [];
+      for (let i = 0; i < this.exports.getWindowCount(); i += 1) windowScores.push(this.exports.getWindowScore(i));
+      return {
+        score: this.exports.getScore(),
+        label: label(this.exports.getLabel()),
+        window_scores: windowScores,
+        features: {
+          gcc_peak: this.exports.getFeature(0),
+          mel_peak: this.exports.getFeature(1),
+          flux_peak: this.exports.getFeature(2),
+        },
+        lags: {
+          gcc: this.exports.getLag(0),
+          mel: this.exports.getLag(1),
+          flux: this.exports.getLag(2),
+        },
+        quality: {
+          ok: flags === 0,
+          notes: qualityNotes(flags, this.model.config.window_sec),
+          level_dbfs: this.exports.getLevel(),
+          activity_db: this.exports.getActivity(),
+        },
+        seconds: this.exports.getSeconds(),
+        wasm_ms: performance.now() - started,
+      };
+    } finally {
+      if (wasmB) this.exports.__unpin(wasmB);
+      if (wasmA) this.exports.__unpin(wasmA);
+      if (typeof this.exports.__collect === "function") this.exports.__collect();
+    }
   }
 }
