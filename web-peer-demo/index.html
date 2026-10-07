@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Same-room live audio POC</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main>
+      <h1>Same-room live audio</h1>
+      <p class="intro">Connect two microphones and compare their live room sound. Audio is analyzed locally in a worker; the score is an estimate, not proof of co-location.</p>
+
+      <section class="card setup">
+        <h2>Connect peers</h2>
+        <div class="actions">
+          <button id="create-session">Create session</button>
+          <label>Peer code to join<input id="join-code" autocomplete="off" spellcheck="false" placeholder="Paste a peer code"></label>
+          <button id="join-session">Join session</button>
+        </div>
+        <p id="peer-status" class="status" role="status">Loading analyzer…</p>
+        <div id="share-panel" class="share-panel" hidden>
+          <div>
+            <div class="muted">Your peer code</div>
+            <code id="peer-code"></code>
+            <button id="copy-invite" class="secondary">Copy invite link</button>
+            <div id="invite-url" class="invite-url"></div>
+          </div>
+          <img id="qr-code" width="240" height="240" alt="QR code for joining this peer">
+        </div>
+      </section>
+
+      <section class="card live-panel">
+        <h2>Live comparison</h2>
+        <p id="capture-status" class="status">Connect to another peer to begin.</p>
+        <div id="result" class="result" hidden aria-live="polite">
+          <div id="score" class="score"></div>
+          <div id="result-quality" class="result-row"></div>
+          <div id="result-details" class="result-row"></div>
+        </div>
+      </section>
+
+      <p class="privacy">Raw microphone capture is requested with echo cancellation, noise suppression, and automatic gain control disabled. Browser, operating-system, hardware, and WebRTC processing may still affect the signal. Only short in-memory buffers are retained by this page.</p>
+    </main>
+
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

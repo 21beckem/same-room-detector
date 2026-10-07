@@ -1,0 +1,31 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; }
+body { margin: 0; color: #202124; background: #f7f7f8; }
+main { width: min(820px, calc(100% - 32px)); margin: 40px auto; }
+h1 { font-size: 1.5rem; font-weight: 650; margin: 0 0 8px; }
+h2 { font-size: 1.05rem; margin: 0 0 16px; }
+.intro { max-width: 720px; color: #555; line-height: 1.5; }
+.card { margin-top: 22px; padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px; }
+.actions { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: end; }
+label { display: grid; gap: 6px; font-size: .85rem; color: #555; }
+input, button { min-height: 38px; box-sizing: border-box; border: 1px solid #bbb; border-radius: 5px; background: white; padding: 0 10px; font: inherit; }
+button { cursor: pointer; background: #202124; color: white; border-color: #202124; white-space: nowrap; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+button.secondary { margin-top: 12px; background: white; color: #202124; border-color: #aaa; }
+.status { min-height: 1.5em; color: #666; line-height: 1.4; }
+.good { color: #147a3d; }
+.warn { color: #986b00; }
+.error { color: #b3261e; }
+.share-panel { display: grid; grid-template-columns: 1fr 240px; gap: 24px; align-items: center; margin-top: 18px; }
+.share-panel img { width: 240px; height: 240px; image-rendering: pixelated; border: 1px solid #ddd; }
+code { display: block; margin-top: 6px; padding: 10px; background: #f1f3f4; border-radius: 4px; overflow-wrap: anywhere; }
+.invite-url { margin-top: 10px; color: #666; font-size: .8rem; overflow-wrap: anywhere; }
+.result { margin-top: 18px; padding: 18px; background: #fafafa; border: 1px solid #ddd; border-radius: 6px; }
+.score { font-size: 1.7rem; font-weight: 700; margin-bottom: 10px; }
+.result-row { margin: 7px 0; line-height: 1.45; }
+.privacy { margin: 22px 2px; color: #777; font-size: .82rem; line-height: 1.5; }
+.muted { color: #666; }
+@media (max-width: 680px) {
+  .actions, .share-panel { grid-template-columns: 1fr; }
+  .actions button { width: 100%; }
+  .share-panel img { justify-self: center; }
+}
