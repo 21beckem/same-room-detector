@@ -1,5 +1,5 @@
 const SAMPLE_RATE = 16000;
-const MAX_SECONDS = 15;
+const MAX_SECONDS = 30;
 
 function ascii(view, offset, length) {
   let value = "";

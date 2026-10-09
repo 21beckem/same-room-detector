@@ -46,12 +46,12 @@ export class SameRoomAnalyzer {
     return this.request({ type: "compare", kind: "recordings", a: recordingA, b: recordingB });
   }
 
-  async compareBuffers(audioA, audioB, metadataA = { label: "A" }, metadataB = { label: "B" }) {
+  async compareBuffers(audioA, audioB, metadataA = { label: "A" }, metadataB = { label: "B" }, options = {}) {
     await this.load();
     const a = Float64Array.from(audioA);
     const b = Float64Array.from(audioB);
     return this.request(
-      { type: "compare", kind: "buffers", a: metadataA, b: metadataB, audioA: a.buffer, audioB: b.buffer },
+      { type: "compare", kind: "buffers", live: options.live === true, maxAlignmentSeconds: options.maxAlignmentSeconds, a: metadataA, b: metadataB, audioA: a.buffer, audioB: b.buffer },
       [a.buffer, b.buffer],
     );
   }

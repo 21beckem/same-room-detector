@@ -1,4 +1,5 @@
 import { fetchPreparedAudio } from "./audio.js";
+import { alignLiveBuffers, estimateLiveOffset } from "./live-sync.js";
 import { SameRoomModel } from "./wasm-model.js";
 
 let model = null;
@@ -30,9 +31,17 @@ async function compare(message) {
     audioA = new Float64Array(message.audioA);
     audioB = new Float64Array(message.audioB);
   }
+  let alignment = null;
+  if (message.kind === "buffers" && message.live === true) {
+    alignment = estimateLiveOffset(audioA, audioB, message.maxAlignmentSeconds ?? 5);
+    const aligned = alignLiveBuffers(audioA, audioB, alignment.usable ? alignment.offset_seconds : 0, model.model.config.window_sec);
+    audioA = aligned.audioA;
+    audioB = aligned.audioB;
+  }
   const result = model.scoreBuffers(audioA, audioB);
   return {
     ...result,
+    alignment,
     pair: { a: message.a, b: message.b },
     ...pairDetails(message.a, message.b),
     total_ms: performance.now() - started,

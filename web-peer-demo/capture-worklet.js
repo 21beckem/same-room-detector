@@ -16,10 +16,9 @@ class RawCaptureProcessor extends AudioWorkletProcessor {
     if (!channels || channels.length === 0) return true;
 
     const frames = channels[0].length;
+    const channel = channels[0];
     for (let frame = 0; frame < frames; frame += 1) {
-      let sample = 0;
-      for (const channel of channels) sample += channel[frame] || 0;
-      this.pending[this.pendingLength++] = sample / channels.length;
+      this.pending[this.pendingLength++] = channel[frame] || 0;
       if (this.pendingLength === CHUNK_FRAMES) {
         this.port.postMessage(this.pending.buffer, [this.pending.buffer]);
         this.pending = new Float32Array(CHUNK_FRAMES);

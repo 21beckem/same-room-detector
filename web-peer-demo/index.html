@@ -33,11 +33,35 @@
       <section class="card live-panel">
         <h2>Live comparison</h2>
         <p id="capture-status" class="status">Connect to another peer to begin.</p>
+        <audio id="remote-audio" autoplay playsinline muted hidden></audio>
         <div id="result" class="result" hidden aria-live="polite">
           <div id="score" class="score"></div>
           <div id="result-quality" class="result-row"></div>
           <div id="result-details" class="result-row"></div>
         </div>
+      </section>
+
+      <section class="card diagnostics-panel">
+        <h2>Live diagnostics</h2>
+        <div class="waveform-grid">
+          <div class="waveform-panel">
+            <div class="meter-label"><span>Local microphone</span><strong id="local-waveform-level">waiting</strong></div>
+            <canvas id="local-waveform" width="640" height="120" role="img" aria-label="Local microphone waveform"></canvas>
+          </div>
+          <div class="waveform-panel">
+            <div class="meter-label"><span>Remote microphone</span><strong id="remote-waveform-level">waiting</strong></div>
+            <canvas id="remote-waveform" width="640" height="120" role="img" aria-label="Remote microphone waveform"></canvas>
+          </div>
+        </div>
+        <div class="meter-row">
+          <div class="meter-label"><span>Local capture</span><strong id="local-buffer-label">0.0 / 12.0 s</strong></div>
+          <progress id="local-buffer-progress" max="12" value="0"></progress>
+        </div>
+        <div class="meter-row">
+          <div class="meter-label"><span>Remote capture</span><strong id="remote-buffer-label">0.0 / 12.0 s</strong></div>
+          <progress id="remote-buffer-progress" max="12" value="0"></progress>
+        </div>
+        <pre id="debug-output" class="debug-output">Analyzer loading…</pre>
       </section>
 
       <p class="privacy">Raw microphone capture is requested with echo cancellation, noise suppression, and automatic gain control disabled. Browser, operating-system, hardware, and WebRTC processing may still affect the signal. Only short in-memory buffers are retained by this page.</p>

@@ -21,6 +21,9 @@ Open `http://localhost:3000/web-peer-demo/`. For two devices, deploy this folder
 use an HTTPS development host; microphone permissions require a secure context
 outside localhost.
 
-Live scoring waits for and retains one 12-second model window. The buffer keeps
-a small chunk-alignment margin, then sends exactly the latest 12 seconds to
-WASM. This keeps the WASM working set bounded on mobile devices.
+Live scoring retains up to 24 seconds and waits for 17 seconds of audio. The
+analysis worker estimates the WebRTC transport offset over +/-5 seconds using
+coarse energy-envelope correlation, trims both streams to a common 12-second
+window, and then sends that aligned window to WASM. The alignment is refreshed
+for every comparison so jitter and small device-clock differences can be
+tracked. Weak correlations are not used as alignment evidence.

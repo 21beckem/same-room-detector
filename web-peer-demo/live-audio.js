@@ -24,6 +24,10 @@ export class RollingAudioBuffer {
     return this.sampleRate ? this.totalSamples / this.sampleRate : 0;
   }
 
+  get chunkCount() {
+    return this.chunks.length;
+  }
+
   snapshot(maxSeconds = this.maxSeconds) {
     const sampleCount = Math.min(this.totalSamples, Math.floor(maxSeconds * this.sampleRate));
     const result = new Float32Array(sampleCount);
@@ -58,8 +62,10 @@ export class RawStreamCapture {
     this.node = new AudioWorkletNode(audioContext, "raw-capture", {
       numberOfInputs: 1,
       numberOfOutputs: 1,
+      channelCount: 1,
       channelCountMode: "explicit",
       channelInterpretation: "speakers",
+      outputChannelCount: [1],
     });
     this.silentSink = audioContext.createGain();
     this.silentSink.gain.value = 0;
