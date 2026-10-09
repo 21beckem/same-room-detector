@@ -120,13 +120,13 @@ function resamplePoly(x, up, down) {
   return output;
 }
 
-export function prepareSamples(input, sampleRate) {
+export function prepareSamples(input, sampleRate, maxSeconds = MAX_SECONDS) {
   let samples = Float64Array.from(input);
   if (sampleRate !== SAMPLE_RATE) {
     const factor = gcd(sampleRate, SAMPLE_RATE);
     samples = resamplePoly(samples, SAMPLE_RATE / factor, sampleRate / factor);
   }
-  samples = samples.slice(0, Math.floor(MAX_SECONDS * SAMPLE_RATE));
+  samples = samples.slice(0, Math.floor(maxSeconds * SAMPLE_RATE));
   if (!samples.length) throw new Error("WAV contains no samples");
   let mean = 0;
   for (const value of samples) mean += value;

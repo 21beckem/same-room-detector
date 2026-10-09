@@ -7,9 +7,11 @@ const COMPARISON_INTERVAL_MS = 1000;
 // Keep the model input at one trained window, but retain enough history to
 // estimate WebRTC transport delay before scoring.
 const ANALYSIS_WINDOW_SECONDS = 12;
-const MAX_ALIGNMENT_SECONDS = 5;
+// User-tunable: set to 0 or any larger value to change the allowed live offset.
+const MAX_ALIGNMENT_SECONDS = 3;
 const MIN_COMPARISON_SECONDS = ANALYSIS_WINDOW_SECONDS + MAX_ALIGNMENT_SECONDS;
-const LIVE_BUFFER_SECONDS = 24;
+const CAPTURE_MARGIN_SECONDS = 1;
+const LIVE_BUFFER_SECONDS = ANALYSIS_WINDOW_SECONDS + MAX_ALIGNMENT_SECONDS + CAPTURE_MARGIN_SECONDS;
 const MAX_BUFFER_SECONDS = LIVE_BUFFER_SECONDS;
 const RAW_AUDIO_CONSTRAINTS = {
   channelCount: { ideal: 1 },
@@ -404,8 +406,8 @@ async function runComparison() {
   comparisonInFlight = true;
   try {
     const sampleRate = localBuffer.sampleRate;
-    const localAudio = prepareSamples(localBuffer.snapshot(LIVE_BUFFER_SECONDS), sampleRate);
-    const remoteAudio = prepareSamples(remoteBuffer.snapshot(LIVE_BUFFER_SECONDS), remoteBuffer.sampleRate);
+    const localAudio = prepareSamples(localBuffer.snapshot(LIVE_BUFFER_SECONDS), sampleRate, LIVE_BUFFER_SECONDS);
+    const remoteAudio = prepareSamples(remoteBuffer.snapshot(LIVE_BUFFER_SECONDS), remoteBuffer.sampleRate, LIVE_BUFFER_SECONDS);
     const result = await analyzer.compareBuffers(
       localAudio,
       remoteAudio,
