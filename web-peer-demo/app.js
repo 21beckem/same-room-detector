@@ -78,6 +78,9 @@ const localConnectedMeta = document.querySelector("#local-connected-meta");
 const remoteConnectedMeta = document.querySelector("#remote-connected-meta");
 const localScoreAge = document.querySelector("#local-score-age");
 const remoteScoreAge = document.querySelector("#remote-score-age");
+const scoreSummaryMax = document.querySelector("#score-summary-max");
+const scoreSummaryAverage = document.querySelector("#score-summary-average");
+const scoreSummaryMin = document.querySelector("#score-summary-min");
 
 let analyzer;
 let peer;
@@ -110,6 +113,17 @@ function setPeerStatus(message, kind = "") {
   peerStatus.className = `status ${kind}`;
   updateDebug();
 }
+const keepAwake = new NoSleep();
+const refreshConfirm = (() => {
+  function handleBeforeUnload(event) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
+  return {
+    enable: () => window.addEventListener('beforeunload', handleBeforeUnload),
+    disable: () => window.removeEventListener('beforeunload', handleBeforeUnload),
+  };
+})();
 
 function setCaptureStatus(message, kind = "") {
   captureStatus.textContent = message;
@@ -137,6 +151,11 @@ function resultMeta(result) {
   return `${result.label} · ${alignment}`;
 }
 
+function scoreClassForValue(value) {
+  if (value === null || value === undefined) return "";
+  return value >= 0.75 ? "good" : value >= 0.25 ? "warn" : "bad";
+}
+
 function renderConnectedScores() {
   const localScoreClass = lastResult?.label === "close" ? "good" : lastResult?.label === "middle" ? "warn" : "bad";
   localConnectedScore.className = `split-score ${lastResult ? localScoreClass : ""}`;
@@ -149,6 +168,15 @@ function renderConnectedScores() {
   remoteConnectedScore.textContent = remoteResult ? `${format(remoteResult.score * 100, 1)}%` : "Waiting for remote score…";
   remoteConnectedMeta.textContent = remoteResult ? resultMeta(remoteResult) : "The other device’s score will appear here.";
   remoteScoreAge.textContent = remoteResult ? "received from remote device" : "Waiting for score";
+
+  const scores = lastResult && remoteResult ? [lastResult.score, remoteResult.score] : null;
+  const summary = scores
+    ? [Math.max(...scores), (scores[0] + scores[1]) / 2, Math.min(...scores)]
+    : [null, null, null];
+  [scoreSummaryMax, scoreSummaryAverage, scoreSummaryMin].forEach((element, index) => {
+    element.className = `summary-score ${scoreClassForValue(summary[index])}`;
+    element.textContent = summary[index] === null ? "—" : `${format(summary[index] * 100, 1)}%`;
+  });
 }
 
 function setConnectedView(connected) {
@@ -158,6 +186,13 @@ function setConnectedView(connected) {
   livePanel.hidden = connected;
   diagnosticsPanel.hidden = connected;
   if (!connected) remoteResult = null;
+  if (connected) {
+    keepAwake.enable();
+    refreshConfirm.enable();
+  } else {
+    keepAwake.disable();
+    refreshConfirm.disable();
+  }
   renderConnectedScores();
 }
 

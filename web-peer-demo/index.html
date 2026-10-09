@@ -41,6 +41,13 @@
           <canvas id="local-connected-waveform" class="connected-waveform" width="640" height="160" role="img" aria-label="Local device waveform"></canvas>
           <div id="local-connected-level" class="split-level">waiting for audio</div>
         </article>
+
+        <div class="score-summary" aria-label="Score summary">
+          <span id="score-summary-max" class="summary-score" data-label="Max" aria-label="Maximum score">—</span>
+          <span id="score-summary-average" class="summary-score" data-label="Avg" aria-label="Average score">—</span>
+          <span id="score-summary-min" class="summary-score" data-label="Min" aria-label="Minimum score">—</span>
+        </div>
+
         <article class="peer-half remote-half">
           <div class="peer-half-heading">
             <span class="peer-half-label">REMOTE DEVICE</span>
@@ -90,6 +97,7 @@
       <p class="privacy">Raw microphone capture is requested with echo cancellation, noise suppression, and automatic gain control disabled. Browser, operating-system, hardware, and WebRTC processing may still affect the signal. Only short in-memory buffers are retained by this page.</p>
     </main>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
