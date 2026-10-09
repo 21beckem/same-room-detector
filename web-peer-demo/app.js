@@ -46,6 +46,10 @@ const joinCodeInput = document.querySelector("#join-code");
 const peerStatus = document.querySelector("#peer-status");
 const captureStatus = document.querySelector("#capture-status");
 const remoteAudio = document.querySelector("#remote-audio");
+const setupPanel = document.querySelector(".setup");
+const livePanel = document.querySelector(".live-panel");
+const diagnosticsPanel = document.querySelector(".diagnostics-panel");
+const connectedView = document.querySelector("#connected-view");
 const sharePanel = document.querySelector("#share-panel");
 const peerCodeOutput = document.querySelector("#peer-code");
 const inviteUrlOutput = document.querySelector("#invite-url");
@@ -64,10 +68,21 @@ const localWaveform = document.querySelector("#local-waveform");
 const remoteWaveform = document.querySelector("#remote-waveform");
 const localWaveformLevel = document.querySelector("#local-waveform-level");
 const remoteWaveformLevel = document.querySelector("#remote-waveform-level");
+const localConnectedWaveform = document.querySelector("#local-connected-waveform");
+const remoteConnectedWaveform = document.querySelector("#remote-connected-waveform");
+const localConnectedLevel = document.querySelector("#local-connected-level");
+const remoteConnectedLevel = document.querySelector("#remote-connected-level");
+const localConnectedScore = document.querySelector("#local-connected-score");
+const remoteConnectedScore = document.querySelector("#remote-connected-score");
+const localConnectedMeta = document.querySelector("#local-connected-meta");
+const remoteConnectedMeta = document.querySelector("#remote-connected-meta");
+const localScoreAge = document.querySelector("#local-score-age");
+const remoteScoreAge = document.querySelector("#remote-score-age");
 
 let analyzer;
 let peer;
 let activeCall;
+let dataConnection;
 let localStream;
 let audioContext;
 let localCapture;
@@ -82,6 +97,7 @@ let completedComparisons = 0;
 let lastComparisonAttemptAt = null;
 let lastResultAt = null;
 let lastResult = null;
+let remoteResult = null;
 let lastComparisonError = null;
 let waveformAnimationFrame;
 
@@ -109,10 +125,46 @@ function levelDbfs(rms) {
   return rms > 0 ? `${format(20 * Math.log10(rms), 1)} dBFS` : "-∞ dBFS";
 }
 
+function resultAge(timestamp) {
+  return timestamp ? `updated ${format(Math.max(0, (Date.now() - timestamp) / 1000), 0)}s ago` : "Waiting for score";
+}
+
+function resultMeta(result) {
+  if (!result) return "Waiting for score";
+  const alignment = result.alignment
+    ? `offset ${format(result.alignment.offset_seconds)}s · correlation ${format(result.alignment.correlation, 2)}`
+    : "alignment n/a";
+  return `${result.label} · ${alignment}`;
+}
+
+function renderConnectedScores() {
+  const localScoreClass = lastResult?.label === "close" ? "good" : lastResult?.label === "middle" ? "warn" : "bad";
+  localConnectedScore.className = `split-score ${lastResult ? localScoreClass : ""}`;
+  localConnectedScore.textContent = lastResult ? `${format(lastResult.score * 100, 1)}%` : "Waiting for local audio…";
+  localConnectedMeta.textContent = lastResult ? resultMeta(lastResult) : "Your device’s score will appear here.";
+  localScoreAge.textContent = resultAge(lastResultAt);
+
+  const remoteScoreClass = remoteResult?.label === "close" ? "good" : remoteResult?.label === "middle" ? "warn" : "bad";
+  remoteConnectedScore.className = `split-score ${remoteResult ? remoteScoreClass : ""}`;
+  remoteConnectedScore.textContent = remoteResult ? `${format(remoteResult.score * 100, 1)}%` : "Waiting for remote score…";
+  remoteConnectedMeta.textContent = remoteResult ? resultMeta(remoteResult) : "The other device’s score will appear here.";
+  remoteScoreAge.textContent = remoteResult ? "received from remote device" : "Waiting for score";
+}
+
+function setConnectedView(connected) {
+  document.body.classList.toggle("connected", connected);
+  setupPanel.hidden = connected;
+  connectedView.hidden = !connected;
+  livePanel.hidden = connected;
+  diagnosticsPanel.hidden = connected;
+  if (!connected) remoteResult = null;
+  renderConnectedScores();
+}
+
 function drawWaveform(canvas, levelOutput, buffer, color) {
   const rect = canvas.getBoundingClientRect();
   const cssWidth = Math.max(1, Math.floor(rect.width));
-  const cssHeight = 120;
+  const cssHeight = Math.max(80, Math.floor(rect.height || 120));
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
   const pixelWidth = Math.max(1, Math.floor(cssWidth * pixelRatio));
   const pixelHeight = Math.max(1, Math.floor(cssHeight * pixelRatio));
@@ -180,6 +232,8 @@ function drawWaveform(canvas, levelOutput, buffer, color) {
 function drawWaveforms() {
   drawWaveform(localWaveform, localWaveformLevel, localBuffer, "#2878c8");
   drawWaveform(remoteWaveform, remoteWaveformLevel, remoteBuffer, "#b45b25");
+  drawWaveform(localConnectedWaveform, localConnectedLevel, localBuffer, "#2878c8");
+  drawWaveform(remoteConnectedWaveform, remoteConnectedLevel, remoteBuffer, "#b45b25");
   waveformAnimationFrame = window.requestAnimationFrame(drawWaveforms);
 }
 
@@ -356,6 +410,7 @@ async function startRemoteCapture(stream) {
   remoteCapture = new RawStreamCapture(context, stream, (samples, sampleRate) => {
     remoteBuffer.append(samples, sampleRate);
   });
+  setConnectedView(true);
   updateDebug();
   setCaptureStatus("Both microphones connected. Collecting live audio…", "good");
   startComparisons();
@@ -382,7 +437,18 @@ function renderResult(result) {
     ? ` · alignment ${format(result.alignment.offset_seconds)} s / ${format(result.alignment.correlation)}${result.alignment.usable ? "" : " (weak)"}`
     : "";
   detailsOutput.textContent = `Features GCC ${format(result.features.gcc_peak)} · mel ${format(result.features.mel_peak)} · flux ${format(result.features.flux_peak)} · lags ${format(result.lags.gcc)} / ${format(result.lags.mel)} / ${format(result.lags.flux)} s${alignmentText} · WASM ${format(result.wasm_ms, 0)} ms`;
+  renderConnectedScores();
+  sendLocalResult();
   updateDebug();
+}
+
+function sendLocalResult() {
+  if (!dataConnection?.open || !lastResult) return;
+  try {
+    dataConnection.send({ type: "score", result: lastResult });
+  } catch (error) {
+    lastComparisonError = `Could not send score to remote device: ${error.message}`;
+  }
 }
 
 async function runComparison() {
@@ -447,9 +513,33 @@ function attachCall(call) {
     remoteAudio.pause();
     remoteAudio.srcObject = null;
     if (comparisonTimer) window.clearInterval(comparisonTimer);
+    setConnectedView(false);
     setCaptureStatus("The other peer disconnected.", "warn");
   });
   call.on("error", handlePeerError);
+}
+
+function attachDataConnection(connection) {
+  if (dataConnection && dataConnection !== connection) dataConnection.close();
+  dataConnection = connection;
+  connection.on("open", () => {
+    sendLocalResult();
+  });
+  connection.on("data", (message) => {
+    if (!message || message.type !== "score" || !message.result) return;
+    remoteResult = message.result;
+    renderConnectedScores();
+  });
+  connection.on("close", () => {
+    if (dataConnection !== connection) return;
+    dataConnection = null;
+    remoteResult = null;
+    renderConnectedScores();
+  });
+  connection.on("error", (error) => {
+    lastComparisonError = `Score sharing failed: ${error.message || error}`;
+    updateDebug();
+  });
 }
 
 async function createSession() {
@@ -468,6 +558,7 @@ async function createSession() {
       attachCall(call);
       setPeerStatus("Incoming peer accepted. Waiting for remote audio…", "good");
     });
+    peer.on("connection", attachDataConnection);
     peer.on("error", handlePeerError);
     peer.on("disconnected", () => setPeerStatus("Peer signaling disconnected.", "warn"));
   } catch (error) {
@@ -493,6 +584,7 @@ async function joinSession() {
       showInvite(id);
       const call = peer.call(targetId, localStream);
       attachCall(call);
+      attachDataConnection(peer.connect(targetId, { reliable: true }));
       setPeerStatus(`Calling ${targetId}…`, "good");
     });
     peer.on("error", handlePeerError);
@@ -528,6 +620,7 @@ window.addEventListener("beforeunload", () => {
   if (audioContext) audioContext.close();
   if (localStream) localStream.getTracks().forEach((track) => track.stop());
   if (activeCall) activeCall.close();
+  if (dataConnection) dataConnection.close();
   remoteAudio.pause();
   remoteAudio.srcObject = null;
   if (peer) peer.destroy();

@@ -30,6 +30,29 @@
         </div>
       </section>
 
+      <section id="connected-view" class="connected-view" hidden aria-live="polite">
+        <article class="peer-half local-half">
+          <div class="peer-half-heading">
+            <span class="peer-half-label">LOCAL DEVICE</span>
+            <span id="local-score-age" class="peer-half-age">Waiting for score</span>
+          </div>
+          <div id="local-connected-score" class="split-score">Waiting for local audio…</div>
+          <div id="local-connected-meta" class="split-meta">Your device’s score will appear here.</div>
+          <canvas id="local-connected-waveform" class="connected-waveform" width="640" height="160" role="img" aria-label="Local device waveform"></canvas>
+          <div id="local-connected-level" class="split-level">waiting for audio</div>
+        </article>
+        <article class="peer-half remote-half">
+          <div class="peer-half-heading">
+            <span class="peer-half-label">REMOTE DEVICE</span>
+            <span id="remote-score-age" class="peer-half-age">Waiting for score</span>
+          </div>
+          <div id="remote-connected-score" class="split-score">Waiting for remote score…</div>
+          <div id="remote-connected-meta" class="split-meta">The other device’s score will appear here.</div>
+          <canvas id="remote-connected-waveform" class="connected-waveform" width="640" height="160" role="img" aria-label="Remote device waveform"></canvas>
+          <div id="remote-connected-level" class="split-level">waiting for audio</div>
+        </article>
+      </section>
+
       <section class="card live-panel">
         <h2>Live comparison</h2>
         <p id="capture-status" class="status">Connect to another peer to begin.</p>
