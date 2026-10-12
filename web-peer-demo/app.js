@@ -13,6 +13,8 @@ const MIN_COMPARISON_SECONDS = ANALYSIS_WINDOW_SECONDS + MAX_ALIGNMENT_SECONDS;
 const CAPTURE_MARGIN_SECONDS = 1;
 const LIVE_BUFFER_SECONDS = ANALYSIS_WINDOW_SECONDS + MAX_ALIGNMENT_SECONDS + CAPTURE_MARGIN_SECONDS;
 const MAX_BUFFER_SECONDS = LIVE_BUFFER_SECONDS;
+const REMOTE_HEALTH_INTERVAL_MS = 1500;
+const REMOTE_MEDIA_GRACE_MS = 5000;
 const RAW_AUDIO_CONSTRAINTS = {
   channelCount: { ideal: 1 },
   sampleRate: { ideal: 96000 },
@@ -78,6 +80,7 @@ const localConnectedMeta = document.querySelector("#local-connected-meta");
 const remoteConnectedMeta = document.querySelector("#remote-connected-meta");
 const localScoreAge = document.querySelector("#local-score-age");
 const remoteScoreAge = document.querySelector("#remote-score-age");
+const remoteTransportStatus = document.querySelector("#remote-transport-status");
 const scoreSummaryMax = document.querySelector("#score-summary-max");
 const scoreSummaryAverage = document.querySelector("#score-summary-average");
 const scoreSummaryMin = document.querySelector("#score-summary-min");
@@ -103,6 +106,9 @@ let lastResult = null;
 let remoteResult = null;
 let lastComparisonError = null;
 let waveformAnimationFrame;
+let remoteHealthTimer;
+let remoteStreamReceivedAt = null;
+let remoteHealth = { state: "waiting", detail: "Waiting for a remote audio stream." };
 
 const localBuffer = new RollingAudioBuffer(MAX_BUFFER_SECONDS);
 const remoteBuffer = new RollingAudioBuffer(MAX_BUFFER_SECONDS);
@@ -177,6 +183,23 @@ function renderConnectedScores() {
     element.className = `summary-score ${scoreClassForValue(summary[index])}`;
     element.textContent = summary[index] === null ? "—" : `${format(summary[index] * 100, 1)}%`;
   });
+}
+
+function setRemoteHealth(state, detail) {
+  const changed = remoteHealth.state !== state || remoteHealth.detail !== detail;
+  remoteHealth = { state, detail };
+  if (remoteTransportStatus) {
+    remoteTransportStatus.className = `transport-status ${state === "ready" ? "good" : state === "waiting" ? "" : state === "silent" ? "warn" : "error"}`;
+    remoteTransportStatus.textContent = detail;
+  }
+  if (changed && state !== "ready") {
+    // A previous score was based on remote samples that are no longer valid.
+    lastResult = null;
+    lastResultAt = null;
+    resultPanel.hidden = true;
+    renderConnectedScores();
+  }
+  updateDebug();
 }
 
 function setConnectedView(connected) {
@@ -337,6 +360,7 @@ function updateDebug() {
     `peer: id=${peer?.id || "none"} | connection=${connectionSummary()}`,
     `local buffer: ${format(localSeconds, 3)}s ${localBuffer.totalSamples} samples ${localBuffer.sampleRate || "?"}Hz ${localBuffer.chunkCount} chunks`,
     `remote buffer: ${format(remoteSeconds, 3)}s ${remoteBuffer.totalSamples} samples ${remoteBuffer.sampleRate || "?"}Hz ${remoteBuffer.chunkCount} chunks`,
+    `remote media: ${remoteHealth.state} | ${remoteHealth.detail}`,
     `local track: ${trackSummary(localStream)}`,
     `remote track: ${trackSummary(remoteCapture?.stream)}`,
     `comparisons: attempts=${comparisonAttempts} completed=${completedComparisons} interval=${COMPARISON_INTERVAL_MS}ms last attempt=${formatTime(lastComparisonAttemptAt)}`,
@@ -432,6 +456,12 @@ async function startRemoteCapture(stream) {
   const remoteTracks = stream.getAudioTracks();
   if (!remoteTracks.length) throw new Error("Peer connected, but the remote stream contains no audio track");
   for (const track of remoteTracks) track.enabled = true;
+  const refreshHealth = () => checkRemoteHealth().catch((error) => setRemoteHealth("unavailable", `Could not inspect remote media transport: ${error.message}`));
+  for (const track of remoteTracks) {
+    track.addEventListener("mute", refreshHealth);
+    track.addEventListener("unmute", refreshHealth);
+    track.addEventListener("ended", refreshHealth);
+  }
   remoteAudio.srcObject = stream;
   try {
     await remoteAudio.play();
@@ -442,13 +472,92 @@ async function startRemoteCapture(stream) {
   }
   localBuffer.clear();
   remoteBuffer.clear();
+  remoteStreamReceivedAt = Date.now();
+  setRemoteHealth("connecting", "Remote stream received; checking that audio packets are arriving…");
   remoteCapture = new RawStreamCapture(context, stream, (samples, sampleRate) => {
     remoteBuffer.append(samples, sampleRate);
   });
   setConnectedView(true);
   updateDebug();
-  setCaptureStatus("Both microphones connected. Collecting live audio…", "good");
+  setCaptureStatus("Remote stream received. Verifying media transport…", "warn");
+  startRemoteHealthMonitor();
   startComparisons();
+}
+
+function stopRemoteHealthMonitor() {
+  if (remoteHealthTimer) window.clearInterval(remoteHealthTimer);
+  remoteHealthTimer = null;
+}
+
+function inboundAudioStats(report) {
+  let packets = 0;
+  let bytes = 0;
+  let found = false;
+  report.forEach((item) => {
+    if (item.type !== "inbound-rtp" || (item.kind || item.mediaType) !== "audio") return;
+    found = true;
+    packets += item.packetsReceived || 0;
+    bytes += item.bytesReceived || 0;
+  });
+  return { found, packets, bytes };
+}
+
+async function checkRemoteHealth() {
+  if (!activeCall || !remoteCapture) {
+    setRemoteHealth("waiting", "Waiting for a remote audio stream.");
+    return;
+  }
+  const track = remoteCapture.stream?.getAudioTracks?.()[0];
+  const connection = activeCall.peerConnection;
+  if (connection && ["failed", "closed"].includes(connection.connectionState || "")) {
+    setRemoteHealth("unavailable", `Peer media connection is ${connection.connectionState}; remote audio is unavailable. Check Wi-Fi, firewall, or TURN/ICE connectivity.`);
+    return;
+  }
+  if (connection && connection.connectionState === "disconnected") {
+    setRemoteHealth("unavailable", "Peer media connection is temporarily disconnected; waiting for remote audio to recover. No room-mismatch score will be produced.");
+    return;
+  }
+  if (connection && connection.iceConnectionState === "failed") {
+    setRemoteHealth("unavailable", "ICE negotiation failed; signaling connected, but the browsers could not establish a media path. Check Wi-Fi, firewall, or TURN/ICE connectivity.");
+    return;
+  }
+  if (track?.readyState === "ended") {
+    setRemoteHealth("unavailable", "The remote audio track ended; no remote microphone audio is available.");
+    return;
+  }
+  if (track?.muted) {
+    setRemoteHealth("unavailable", "The remote audio track is muted; no media is arriving. This is a connection problem, not a room-mismatch result.");
+    return;
+  }
+
+  let stats = { found: false, packets: 0, bytes: 0 };
+  if (connection?.getStats) stats = inboundAudioStats(await connection.getStats());
+  const graceExpired = remoteStreamReceivedAt && Date.now() - remoteStreamReceivedAt > REMOTE_MEDIA_GRACE_MS;
+  if (graceExpired && (!stats.found || stats.packets === 0 || stats.bytes === 0)) {
+    setRemoteHealth("unavailable", "Remote stream exists, but RTCP reports no inbound audio packets. Signaling may be connected while the media path is blocked by Wi-Fi, firewall, or ICE/TURN configuration.");
+    return;
+  }
+
+  const recent = remoteBuffer.snapshot(Math.min(2, remoteBuffer.seconds));
+  let energy = 0;
+  for (const sample of recent) energy += sample * sample;
+  const rms = recent.length ? Math.sqrt(energy / recent.length) : 0;
+  if (stats.packets > 0 && remoteBuffer.seconds >= 2 && rms < 1e-5) {
+    setRemoteHealth("silent", "Media packets are arriving, but the remote microphone is sending near-silence. Check microphone permission, input selection, and mute state.");
+    return;
+  }
+  if (stats.packets > 0 || remoteBuffer.seconds >= 1) {
+    setRemoteHealth("ready", "Remote audio transport is healthy. Collecting samples…");
+    setCaptureStatus("Both microphones connected. Collecting live audio…", "good");
+  }
+}
+
+function startRemoteHealthMonitor() {
+  stopRemoteHealthMonitor();
+  checkRemoteHealth().catch((error) => setRemoteHealth("unavailable", `Could not inspect remote media transport: ${error.message}`));
+  remoteHealthTimer = window.setInterval(() => {
+    checkRemoteHealth().catch((error) => setRemoteHealth("unavailable", `Could not inspect remote media transport: ${error.message}`));
+  }, REMOTE_HEALTH_INTERVAL_MS);
 }
 
 function startComparisons() {
@@ -491,6 +600,11 @@ async function runComparison() {
     updateDebug();
     return;
   }
+  if (remoteHealth.state !== "ready") {
+    setCaptureStatus(remoteHealth.detail, remoteHealth.state === "silent" ? "warn" : "error");
+    updateDebug();
+    return;
+  }
   comparisonAttempts += 1;
   lastComparisonAttemptAt = Date.now();
   if (comparisonInFlight) {
@@ -529,6 +643,7 @@ async function runComparison() {
 
 function handlePeerError(error) {
   setPeerStatus(`Peer connection error: ${error.message || error.type || error}`, "error");
+  if (activeCall) setRemoteHealth("unavailable", `PeerJS reported a connection error: ${error.message || error.type || error}. Remote audio cannot be scored.`);
   createButton.disabled = false;
   joinButton.disabled = false;
 }
@@ -548,6 +663,9 @@ function attachCall(call) {
     remoteAudio.pause();
     remoteAudio.srcObject = null;
     if (comparisonTimer) window.clearInterval(comparisonTimer);
+    stopRemoteHealthMonitor();
+    remoteStreamReceivedAt = null;
+    setRemoteHealth("waiting", "Waiting for a remote audio stream.");
     setConnectedView(false);
     setCaptureStatus("The other peer disconnected.", "warn");
   });
