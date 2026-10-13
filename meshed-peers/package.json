@@ -1,0 +1,15 @@
+{
+  "name": "meshed-peers",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "scripts": {
+    "test": "node test/protocol.test.mjs"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "dependencies": {
+    "peerjs": "^1.5.4"
+  }
+}

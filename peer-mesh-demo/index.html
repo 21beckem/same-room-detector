@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MeshedPeers debug client</title>
+    <link rel="stylesheet" href="./styles.css">
+    <script type="importmap">
+      {
+        "imports": {
+          "peerjs": "https://cdn.jsdelivr.net/npm/peerjs@1.5.4/+esm"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <p class="eyebrow">Same-Room Detection Mesh</p>
+        <h1>MeshedPeers debug client</h1>
+        <p class="intro">This UI exercises the reusable client. Microphone audio is analyzed locally and is sent only through the browser-to-browser WebRTC connection.</p>
+      </header>
+
+      <section class="controls panel">
+        <button id="start-button" type="button">Start mesh</button>
+        <button id="stop-button" type="button" disabled>Stop mesh</button>
+        <button id="broadcast-button" type="button" disabled>Broadcast random 3-character message</button>
+        <span id="peer-id" class="peer-id">Peer ID: not connected</span>
+      </section>
+
+      <section class="panel status-panel" aria-live="polite">
+        <h2>Current status</h2>
+        <p id="status">idle</p>
+      </section>
+
+      <div class="columns">
+        <section class="panel">
+          <div class="section-heading">
+            <h2>Nearby peers</h2>
+            <span id="nearby-count" class="count">0</span>
+          </div>
+          <ul id="nearby-peers" class="peer-list">
+            <li class="empty">No nearby peers yet.</li>
+          </ul>
+        </section>
+
+        <section class="panel">
+          <div class="section-heading">
+            <h2>Not-nearby / debug results</h2>
+            <span id="failed-count" class="count">0</span>
+          </div>
+          <ul id="failed-peers" class="peer-list">
+            <li class="empty">No failed comparisons yet.</li>
+          </ul>
+        </section>
+      </div>
+
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Broadcast log</h2>
+          <button id="clear-log" type="button" class="small-button">Clear</button>
+        </div>
+        <ul id="message-log" class="message-log">
+          <li class="empty">No messages received.</li>
+        </ul>
+      </section>
+
+      <p id="error" class="error" role="alert" hidden></p>
+    </main>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

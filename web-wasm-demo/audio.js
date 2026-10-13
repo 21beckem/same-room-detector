@@ -39,7 +39,7 @@ function readWav(arrayBuffer) {
   const bytesPerSample = format.bits / 8;
   const frameBytes = bytesPerSample * format.channels;
   const frames = Math.floor(dataLength / frameBytes);
-  const mono = new Float64Array(frames);
+  const mono = new Float16Array(frames);
   for (let frame = 0; frame < frames; frame += 1) {
     let total = 0;
     for (let channel = 0; channel < format.channels; channel += 1) {
@@ -56,7 +56,7 @@ function readWav(arrayBuffer) {
       else throw new Error(`Unsupported WAV encoding=${format.encoding}, bits=${format.bits}`);
       total += sample;
     }
-    mono[frame] = total / format.channels;
+    mono[frame] = Math.round(total / format.channels * 1000) / 1000;
   }
   return { samples: mono, sampleRate: format.sampleRate };
 }
