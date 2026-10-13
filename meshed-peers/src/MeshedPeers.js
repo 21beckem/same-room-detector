@@ -22,7 +22,7 @@ const STATUS = Object.freeze({
 });
 
 const DEFAULTS = {
-  peerServer: { host: "localhost", port: 9000, path: "/peerjs", secure: false },
+  peerServer: { },
   meshServerUrl: null,
   modelUrl: "../model_output/model.json",
   wasmUrl: "../web-calibration/wasm_parity/wasm/same_room.wasm",

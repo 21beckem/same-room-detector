@@ -1,17 +1,17 @@
-import { MeshedPeers } from "../meshed-peers/src/index.js";
+import { MeshedPeers } from '../meshed-peers/src/index.js';
 
-const startButton = document.querySelector("#start-button");
-const stopButton = document.querySelector("#stop-button");
-const broadcastButton = document.querySelector("#broadcast-button");
-const clearLogButton = document.querySelector("#clear-log");
-const statusOutput = document.querySelector("#status");
-const peerIdOutput = document.querySelector("#peer-id");
-const nearbyList = document.querySelector("#nearby-peers");
-const failedList = document.querySelector("#failed-peers");
-const nearbyCount = document.querySelector("#nearby-count");
-const failedCount = document.querySelector("#failed-count");
-const messageLog = document.querySelector("#message-log");
-const errorOutput = document.querySelector("#error");
+const startButton = document.querySelector('#start-button');
+const stopButton = document.querySelector('#stop-button');
+const broadcastButton = document.querySelector('#broadcast-button');
+const clearLogButton = document.querySelector('#clear-log');
+const statusOutput = document.querySelector('#status');
+const peerIdOutput = document.querySelector('#peer-id');
+const nearbyList = document.querySelector('#nearby-peers');
+const failedList = document.querySelector('#failed-peers');
+const nearbyCount = document.querySelector('#nearby-count');
+const failedCount = document.querySelector('#failed-count');
+const messageLog = document.querySelector('#message-log');
+const errorOutput = document.querySelector('#error');
 
 const failedPeers = new Map();
 let mesh = null;
@@ -25,15 +25,23 @@ const refreshConfirm = (() => {
   };
 })();
 
+const isLocalRegex = /(localhost)|(\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)/gm
+const isHostedLocally = isLocalRegex.test(window.location.hostname);
+const PEER_SERVER_CONFIG = isHostedLocally ? {
+  host: window.location.hostname,
+  port: 9000,
+  path: '/peerjs',
+  secure: false
+} : {
+  host: 'mesh-peer-server.onrender.com',
+  path: '/peerjs',
+  secure: true
+};
+
 const meshConfig = {
-  peerServer: {
-    host: window.location.hostname,
-    port: 9000,
-    path: "/peerjs",
-    secure: false,
-  },
-  modelUrl: "../model_output/model.json",
-  wasmUrl: "../web-calibration/wasm_parity/wasm/same_room.wasm",
+  peerServer: { ...PEER_SERVER_CONFIG },
+  modelUrl: '../model_output/model.json',
+  wasmUrl: '../web-calibration/wasm_parity/wasm/same_room.wasm',
   timing: {
     reassessSeconds: 15,
     retrySeconds: 5,
@@ -43,7 +51,7 @@ const meshConfig = {
 };
 
 function formatTime(timestamp) {
-  if (!timestamp) return "never";
+  if (!timestamp) return 'never';
   return new Date(timestamp).toLocaleTimeString();
 }
 
@@ -59,17 +67,17 @@ function showError(error) {
 
 function clearError() {
   errorOutput.hidden = true;
-  errorOutput.textContent = "";
+  errorOutput.textContent = '';
 }
 
 function peerItem(peer, failed = false) {
-  const item = document.createElement("li");
-  item.className = failed ? "peer-item failed" : "peer-item";
-  const heading = document.createElement("strong");
+  const item = document.createElement('li');
+  item.className = failed ? 'peer-item failed' : 'peer-item';
+  const heading = document.createElement('strong');
   heading.textContent = peer.peerId;
-  const details = document.createElement("span");
-  const score = peer.score === undefined ? "n/a" : Number(peer.score).toFixed(3);
-  const reason = peer.reason ? ` · ${peer.reason}` : "";
+  const details = document.createElement('span');
+  const score = peer.score === undefined ? 'n/a' : Number(peer.score).toFixed(3);
+  const reason = peer.reason ? ` · ${peer.reason}` : '';
   details.textContent = `score ${score} · checked ${formatTime(peer.lastCheckedAt || peer.checkedAt)}${reason}`;
   item.append(heading, details);
   return item;
@@ -80,9 +88,9 @@ function renderNearby() {
   nearbyCount.textContent = String(peers.length);
   nearbyList.replaceChildren();
   if (!peers.length) {
-    const empty = document.createElement("li");
-    empty.className = "empty";
-    empty.textContent = "No nearby peers yet.";
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'No nearby peers yet.';
     nearbyList.append(empty);
     return;
   }
@@ -93,9 +101,9 @@ function renderFailed() {
   failedCount.textContent = String(failedPeers.size);
   failedList.replaceChildren();
   if (!failedPeers.size) {
-    const empty = document.createElement("li");
-    empty.className = "empty";
-    empty.textContent = "No failed comparisons yet.";
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'No failed comparisons yet.';
     failedList.append(empty);
     return;
   }
@@ -103,41 +111,41 @@ function renderFailed() {
 }
 
 function logMessage(senderId, message) {
-  const item = document.createElement("li");
+  const item = document.createElement('li');
   item.textContent = `${formatTime(Date.now())} · ${senderId}: ${String(message)}`;
-  if (messageLog.querySelector(".empty")) messageLog.replaceChildren();
+  if (messageLog.querySelector('.empty')) messageLog.replaceChildren();
   messageLog.append(item);
 }
 
 function randomMessage() {
-  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
   const values = new Uint32Array(3);
   crypto.getRandomValues(values);
-  return [...values].map((value) => alphabet[value % alphabet.length]).join("");
+  return [...values].map((value) => alphabet[value % alphabet.length]).join('');
 }
 
 function attachMeshEvents() {
-  mesh.on("status-change", (_status, details) => setStatus(details.message || details.status));
-  mesh.on("ready", (peerId) => {
+  mesh.on('status-change', (_status, details) => setStatus(details.message || details.status));
+  mesh.on('ready', (peerId) => {
     peerIdOutput.textContent = `Peer ID: ${peerId}`;
-    setStatus("connected to mesh-peer-server");
+    setStatus('connected to mesh-peer-server');
     keepAwake.enable();
     refreshConfirm.enable();
   });
-  mesh.on("new-nearby-peer", (_peerId, details) => {
+  mesh.on('new-nearby-peer', (_peerId, details) => {
     failedPeers.delete(details.peerId);
     renderNearby();
     renderFailed();
   });
-  mesh.on("nearby-peer-updated", () => renderNearby());
-  mesh.on("peer-failed", (peerId, details = {}) => {
+  mesh.on('nearby-peer-updated', () => renderNearby());
+  mesh.on('peer-failed', (peerId, details = {}) => {
     failedPeers.set(peerId, { peerId, ...details });
     renderNearby();
     renderFailed();
   });
-  mesh.on("broadcast", logMessage);
-  mesh.on("peer-message", (peerId, message) => logMessage(peerId, message));
-  mesh.on("error", (_peerId, error) => showError(error));
+  mesh.on('broadcast', logMessage);
+  mesh.on('peer-message', (peerId, message) => logMessage(peerId, message));
+  mesh.on('error', (_peerId, error) => showError(error));
 }
 
 async function start() {
@@ -160,7 +168,7 @@ async function stop() {
   broadcastButton.disabled = true;
   await mesh?.stop();
   mesh = null;
-  peerIdOutput.textContent = "Peer ID: not connected";
+  peerIdOutput.textContent = 'Peer ID: not connected';
   startButton.disabled = false;
   renderNearby();
 
@@ -168,22 +176,22 @@ async function stop() {
   refreshConfirm.disable();
 }
 
-startButton.addEventListener("click", () => start());
-stopButton.addEventListener("click", () => stop());
-broadcastButton.addEventListener("click", () => {
+startButton.addEventListener('click', () => start());
+stopButton.addEventListener('click', () => stop());
+broadcastButton.addEventListener('click', () => {
   if (!mesh) return;
   const message = randomMessage();
   try {
     const count = mesh.broadcastMessage(message);
-    logMessage("local broadcast", `${message} (${count} nearby peer${count === 1 ? "" : "s"})`);
+    logMessage('local broadcast', `${message} (${count} nearby peer${count === 1 ? '' : 's'})`);
   } catch (error) {
     showError(error);
   }
 });
-clearLogButton.addEventListener("click", () => {
-  const empty = document.createElement("li");
-  empty.className = "empty";
-  empty.textContent = "No messages received.";
+clearLogButton.addEventListener('click', () => {
+  const empty = document.createElement('li');
+  empty.className = 'empty';
+  empty.textContent = 'No messages received.';
   messageLog.replaceChildren(empty);
 });
 
