@@ -8,6 +8,8 @@ const MAX_AUDIO_CHUNKS = 2048;
 const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
 const AUDIO_HIGH_WATER_BYTES = 512 * 1024;
 const AUDIO_PUMP_DELAY_MS = 25;
+const CONTROL_CONNECTION_LABEL = "meshed-peers-control";
+const AUDIO_CONNECTION_LABEL = "meshed-peers-audio";
 
 function asArrayBuffer(payload) {
   if (payload instanceof ArrayBuffer) return payload;
@@ -59,7 +61,8 @@ export class PeerConnectionManager extends EventEmitter {
 
   attachData(connection) {
     const session = this.getOrCreateSession(connection.peer);
-    const isAudio = connection.metadata?.meshedPeersChannel === "audio";
+    const isAudio = connection.metadata?.meshedPeersChannel === "audio"
+      || connection.label === AUDIO_CONNECTION_LABEL;
     const slot = isAudio ? "audioData" : "data";
     if (session[slot] && session[slot] !== connection) session[slot].close();
     session[slot] = connection;
@@ -126,9 +129,15 @@ export class PeerConnectionManager extends EventEmitter {
   async connect(peerId) {
     if (!this.peer?.open) throw new Error("PeerJS client is not open");
     const session = this.getOrCreateSession(peerId);
-    if (!session.data) this.attachData(this.peer.connect(peerId, { reliable: true, serialization: "json" }));
+    if (!session.data) this.attachData(this.peer.connect(peerId, {
+      label: CONTROL_CONNECTION_LABEL,
+      reliable: true,
+      serialization: "json",
+      metadata: { meshedPeersChannel: "control" },
+    }));
     if (!session.audioData) {
       this.attachData(this.peer.connect(peerId, {
+        label: AUDIO_CONNECTION_LABEL,
         reliable: true,
         serialization: "binary",
         metadata: { meshedPeersChannel: "audio" },

@@ -4,7 +4,7 @@
   "type": "module",
   "main": "./src/index.js",
   "scripts": {
-    "test": "node test/protocol.test.mjs"
+    "test": "node test/protocol.test.mjs && node test/connection-manager.test.mjs && node test/audio-capture.test.mjs"
   },
   "exports": {
     ".": "./src/index.js"

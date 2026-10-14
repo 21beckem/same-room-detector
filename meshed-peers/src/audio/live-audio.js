@@ -14,9 +14,10 @@ export class RollingAudioBuffer {
     this.chunks = [];
     this.totalSamples = 0;
     this.sampleRate = null;
+    this.lastChunkReceivedAtMs = null;
   }
 
-  append(samples, sampleRate, startFrame = null, captureEndMs = null) {
+  append(samples, sampleRate, startFrame = null, captureEndMs = null, receivedAtMs = nowMs()) {
     if (!samples?.length || !sampleRate) return;
     if (!this.sampleRate) this.sampleRate = sampleRate;
     if (this.sampleRate !== sampleRate) throw new Error("Audio sample rate changed during capture");
@@ -38,6 +39,7 @@ export class RollingAudioBuffer {
       endMs,
     });
     this.totalSamples += values.length;
+    this.lastChunkReceivedAtMs = finiteNumber(receivedAtMs);
 
     const maxSamples = Math.ceil(this.maxSeconds * this.sampleRate);
     while (this.totalSamples > maxSamples && this.chunks.length > 1) {
@@ -58,6 +60,16 @@ export class RollingAudioBuffer {
     const endMs = this.latestCaptureEndMs;
     if (endMs === null) return true;
     return currentMs - endMs <= maxAgeSeconds * 1000;
+  }
+
+  captureAgeMs(currentMs = nowMs()) {
+    if (this.lastChunkReceivedAtMs === null) return null;
+    return Math.max(0, currentMs - this.lastChunkReceivedAtMs);
+  }
+
+  isCaptureFresh(maxAgeSeconds, currentMs = nowMs()) {
+    const ageMs = this.captureAgeMs(currentMs);
+    return ageMs !== null && ageMs <= maxAgeSeconds * 1000;
   }
 
   flatten() {
@@ -149,20 +161,27 @@ export class RollingAudioBuffer {
   clear() {
     this.chunks = [];
     this.totalSamples = 0;
+    this.lastChunkReceivedAtMs = null;
   }
 
   replace(samples, sampleRate, metadata = {}) {
     this.clear();
-    this.append(samples, sampleRate, metadata.startFrame, metadata.captureEndMs);
+    this.append(samples, sampleRate, metadata.startFrame, metadata.captureEndMs, nowMs());
   }
 }
 
 export class RawStreamCapture {
-  constructor(audioContext, stream, workletUrl, onChunk) {
+  constructor(audioContext, stream, workletUrl, onChunk, { onStateChange = null, onError = null } = {}) {
     this.audioContext = audioContext;
     this.stream = stream;
     this.onChunk = onChunk;
+    this.onStateChange = onStateChange;
+    this.onError = onError;
     this.clockOriginMs = nowMs() - audioContext.currentTime * 1000;
+    this.clockRebasePending = false;
+    this.lastChunkReceivedAtMs = null;
+    this.lastCaptureEndMs = null;
+    this.chunkCount = 0;
     this.source = audioContext.createMediaStreamSource(stream);
     this.node = new AudioWorkletNode(audioContext, "raw-capture", {
       numberOfInputs: 1,
@@ -174,6 +193,12 @@ export class RawStreamCapture {
     });
     this.silentSink = audioContext.createGain();
     this.silentSink.gain.value = 0;
+    this.stateChangeHandler = () => {
+      this.clockRebasePending = true;
+      if (this.audioContext.state === "running") this.rebaseClock();
+      this.onStateChange?.(this.audioContext.state, this);
+    };
+    this.audioContext.addEventListener?.("statechange", this.stateChangeHandler);
     this.node.port.onmessage = (event) => {
       const payload = event.data;
       const buffer = payload?.buffer instanceof ArrayBuffer ? payload.buffer : payload;
@@ -181,16 +206,32 @@ export class RawStreamCapture {
       const samples = new Float32Array(buffer);
       const startFrame = finiteNumber(payload?.startFrame);
       const endFrame = startFrame === null ? null : startFrame + samples.length;
-      const captureEndMs = endFrame === null
+      const receivedAtMs = nowMs();
+      if (audioContext.state === "running" && this.clockRebasePending) this.rebaseClock(receivedAtMs);
+      const captureEndMs = endFrame === null || audioContext.state !== "running"
         ? null
         : this.clockOriginMs + endFrame / audioContext.sampleRate * 1000;
-      this.onChunk(samples, audioContext.sampleRate, startFrame, captureEndMs);
+      this.lastChunkReceivedAtMs = receivedAtMs;
+      this.lastCaptureEndMs = captureEndMs;
+      this.chunkCount += 1;
+      try {
+        this.onChunk(samples, audioContext.sampleRate, startFrame, captureEndMs, receivedAtMs);
+      } catch (error) {
+        if (this.onError) this.onError(error, this);
+        else throw error;
+      }
     };
     this.source.connect(this.node).connect(this.silentSink).connect(audioContext.destination);
   }
 
+  rebaseClock(currentMs = nowMs()) {
+    this.clockOriginMs = currentMs - this.audioContext.currentTime * 1000;
+    this.clockRebasePending = false;
+  }
+
   dispose() {
     this.node.port.onmessage = null;
+    this.audioContext.removeEventListener?.("statechange", this.stateChangeHandler);
     this.source.disconnect();
     this.node.disconnect();
     this.silentSink.disconnect();

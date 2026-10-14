@@ -99,6 +99,9 @@ export class MeshedPeers extends EventEmitter {
     this.localStream = null;
     this.audioContext = null;
     this.localCapture = null;
+    this.captureTrackHandlers = [];
+    this.captureVisibilityHandler = null;
+    this.captureInteractionHandler = null;
     this.analyzer = null;
     this.manager = null;
     this.discoveryTimer = null;
@@ -200,8 +203,148 @@ export class MeshedPeers extends EventEmitter {
       this.audioContext,
       this.localStream,
       new URL("./audio/capture-worklet.js", import.meta.url),
-      (samples, rate, startFrame, captureEndMs) => this.localBuffer.append(samples, rate, startFrame, captureEndMs),
+      (samples, rate, startFrame, captureEndMs, receivedAtMs) => this.localBuffer.append(
+        samples,
+        rate,
+        startFrame,
+        captureEndMs,
+        receivedAtMs,
+      ),
+      {
+        onStateChange: (state) => this.handleCaptureStateChange(state),
+        onError: (error) => this.handleCaptureError(error),
+      },
     );
+    this.attachCaptureLifecycle();
+  }
+
+  attachCaptureLifecycle() {
+    for (const track of this.localStream?.getAudioTracks?.() || []) {
+      for (const eventName of ["mute", "unmute", "ended"]) {
+        const handler = () => this.handleCaptureTrackState(track);
+        track.addEventListener?.(eventName, handler);
+        this.captureTrackHandlers.push({ track, eventName, handler });
+      }
+    }
+    if (typeof document === "undefined") return;
+    this.captureVisibilityHandler = () => {
+      if (document.visibilityState === "visible") void this.resumeAudioCapture();
+    };
+    this.captureInteractionHandler = () => {
+      if (this.audioContext?.state !== "running") void this.resumeAudioCapture();
+    };
+    document.addEventListener("visibilitychange", this.captureVisibilityHandler);
+    document.addEventListener("pointerdown", this.captureInteractionHandler, { passive: true });
+    document.addEventListener("keydown", this.captureInteractionHandler);
+  }
+
+  detachCaptureLifecycle() {
+    for (const { track, eventName, handler } of this.captureTrackHandlers) {
+      track.removeEventListener?.(eventName, handler);
+    }
+    this.captureTrackHandlers = [];
+    if (typeof document !== "undefined") {
+      if (this.captureVisibilityHandler) document.removeEventListener("visibilitychange", this.captureVisibilityHandler);
+      if (this.captureInteractionHandler) {
+        document.removeEventListener("pointerdown", this.captureInteractionHandler);
+        document.removeEventListener("keydown", this.captureInteractionHandler);
+      }
+    }
+    this.captureVisibilityHandler = null;
+    this.captureInteractionHandler = null;
+  }
+
+  async resumeAudioCapture() {
+    if (!this.audioContext || this.audioContext.state === "running") return true;
+    try {
+      await this.audioContext.resume();
+      return this.audioContext.state === "running";
+    } catch (error) {
+      this.handleCaptureError(error);
+      return false;
+    }
+  }
+
+  handleCaptureStateChange(state) {
+    this.emit("capture-state", { state });
+    if (state !== "running") {
+      this.setStatus(STATUS.COMPARING, { message: `audio capture is ${state}; waiting for capture to resume` });
+      return;
+    }
+    for (const link of this.links.values()) {
+      if (!link.cycleCompared) this.compareWhenReady(link);
+    }
+  }
+
+  handleCaptureTrackState(track) {
+    this.emit("capture-track-state", {
+      readyState: track.readyState,
+      muted: track.muted === true,
+    });
+    if (track.readyState === "ended") {
+      this.setStatus(STATUS.COMPARING, { message: "microphone capture ended; restart the mesh to capture audio again" });
+    } else if (track.muted === true) {
+      this.setStatus(STATUS.COMPARING, { message: "microphone capture is muted; waiting for it to resume" });
+    } else {
+      this.localCapture?.rebaseClock();
+      for (const link of this.links.values()) {
+        if (!link.cycleCompared) this.compareWhenReady(link);
+      }
+    }
+  }
+
+  handleCaptureError(error) {
+    this.emit("capture-error", error);
+    this.emit("error", null, error);
+    this.setStatus(STATUS.COMPARING, { message: `audio capture error: ${error?.message || String(error)}`, error });
+  }
+
+  getLocalCaptureStatus() {
+    const required = this.requiredAudioSeconds;
+    const buffer = this.localBuffer;
+    if (!buffer?.sampleRate || buffer.seconds < required) {
+      return { ready: false, kind: "insufficient", message: "not enough buffered audio" };
+    }
+
+    const track = this.localStream?.getAudioTracks?.()[0];
+    if (track?.readyState === "ended") {
+      return { ready: false, kind: "ended", message: "microphone capture ended; restart the mesh" };
+    }
+    if (track?.muted === true) {
+      return { ready: false, kind: "muted", message: "microphone capture is muted" };
+    }
+
+    const contextState = this.audioContext?.state;
+    if (contextState && contextState !== "running") {
+      return { ready: false, kind: "suspended", state: contextState, message: `audio capture is ${contextState}` };
+    }
+
+    if (typeof buffer.captureAgeMs === "function") {
+      const ageMs = buffer.captureAgeMs();
+      if (ageMs === null || ageMs > this.config.timing.maxSnapshotAgeSeconds * 1000) {
+        return {
+          ready: false,
+          kind: "stale",
+          ageMs,
+          message: ageMs === null ? "audio capture has not produced recent samples" : "audio capture is stale",
+        };
+      }
+    }
+
+    return { ready: true, kind: "ready", message: "audio capture is ready" };
+  }
+
+  localCaptureWaitMessage(peerId, status) {
+    if (status.kind === "insufficient") {
+      return status.message === "not enough buffered audio" && this.links.get(peerId)?.hasCompared
+        ? `waiting for this device to capture enough buffered audio for ${peerId}`
+        : `collecting initial audio for ${peerId}`;
+    }
+    if (status.kind === "suspended") return `waiting for local audio capture to resume (${status.state})`;
+    if (status.kind === "ended") return `microphone capture ended; restart the mesh to compare with ${peerId}`;
+    if (status.kind === "muted") return `microphone capture is muted; waiting to compare with ${peerId}`;
+    if (status.kind === "stale") return `waiting for fresh local audio from this device for ${peerId}`;
+    return `waiting for enough buffered audio from ${peerId}`;
   }
 
   attachManager() {
@@ -394,7 +537,7 @@ export class MeshedPeers extends EventEmitter {
   }
 
   captureLocalSnapshot(targetEndMs = null) {
-    if (!this.localBuffer?.sampleRate || this.localBuffer.seconds < this.requiredAudioSeconds) return null;
+    if (!this.getLocalCaptureStatus().ready) return null;
     const snapshot = this.localBuffer.snapshotWithMetadata
       ? this.localBuffer.snapshotWithMetadata(this.requiredAudioSeconds, targetEndMs)
       : {
@@ -402,8 +545,6 @@ export class MeshedPeers extends EventEmitter {
         sampleRate: this.localBuffer.sampleRate,
       };
     if (!snapshot?.samples?.length) return null;
-    if (snapshot.captureEndMs !== null && snapshot.captureEndMs !== undefined
-      && !this.localBuffer.isFresh(this.config.timing.maxSnapshotAgeSeconds, nowMs())) return null;
     return snapshot;
   }
 
@@ -509,10 +650,8 @@ export class MeshedPeers extends EventEmitter {
       link.comparisonTimer = null;
     }
     const required = this.requiredAudioSeconds;
-    const localReady = this.localBuffer.seconds >= required
-      && (this.localBuffer.latestCaptureEndMs === null
-        || this.localBuffer.latestCaptureEndMs === undefined
-        || this.localBuffer.isFresh(this.config.timing.maxSnapshotAgeSeconds, nowMs()));
+    const localStatus = this.getLocalCaptureStatus();
+    const localReady = localStatus.ready;
     if (link.isCoordinator && link.activeSnapshotId && !link.snapshotReceived) {
       const elapsed = nowMs() - link.snapshotRequestedAt;
       const timeout = link.exchangeStarted
@@ -537,9 +676,7 @@ export class MeshedPeers extends EventEmitter {
     if (!localReady || !remoteReady || link.cycleCompared) {
       let message;
       if (!localReady) {
-        message = link.hasCompared
-          ? `waiting for enough buffered audio from ${link.peerId}`
-          : `collecting initial audio for ${link.peerId}`;
+        message = this.localCaptureWaitMessage(link.peerId, localStatus);
       } else if (!link.activeSnapshotId) {
         message = `waiting for ${link.peerId} to start audio comparison`;
       } else if (link.isCoordinator && !link.remoteReady) {
@@ -874,6 +1011,7 @@ export class MeshedPeers extends EventEmitter {
     this.nearby.clear();
     await this.manager?.stop();
     this.manager = null;
+    this.detachCaptureLifecycle();
     this.localCapture?.dispose();
     this.localCapture = null;
     this.localStream?.getTracks().forEach((track) => track.stop());

@@ -44,3 +44,10 @@ snapshot transfer its own timeout. A first comparison waits until each browser
 has enough local audio; later checks reuse the already-running buffers instead
 of starting a new listening period. No live audio MediaConnection is needed,
 and the matchmaking server never receives audio.
+
+Capture liveness is tracked separately from audio-clock timestamps, so a paused
+or resumed `AudioContext` cannot permanently make otherwise-new audio look stale.
+The client listens for context and microphone-track lifecycle changes, attempts
+to resume capture when the page becomes visible or receives user input, and
+reports explicit suspended, muted, ended, or stale-capture statuses when
+comparison must wait.
