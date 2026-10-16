@@ -45,11 +45,11 @@ function normalizedCorrelation(a, b, offset) {
   return numerator / Math.sqrt(energyA * energyB);
 }
 
-export function estimateLiveOffset(audioA, audioB, maxSeconds = 5) {
+export function estimateLiveOffset(audioA, audioB, maxSeconds, minimumSeconds) {
   const a = envelope(audioA);
   const b = envelope(audioB);
   const maxOffsetFrames = Math.floor(maxSeconds * SAMPLE_RATE / FRAME_SAMPLES);
-  const minimumFrames = Math.floor(8 * SAMPLE_RATE / FRAME_SAMPLES);
+  const minimumFrames = Math.floor(minimumSeconds * SAMPLE_RATE / FRAME_SAMPLES);
   let bestOffset = 0;
   let bestCorrelation = -1;
   let secondBest = -1;
@@ -75,7 +75,7 @@ export function estimateLiveOffset(audioA, audioB, maxSeconds = 5) {
   };
 }
 
-export function alignLiveBuffers(audioA, audioB, offsetSeconds, targetSeconds = 12) {
+export function alignLiveBuffers(audioA, audioB, offsetSeconds, targetSeconds) {
   const offset = Math.round(offsetSeconds * SAMPLE_RATE);
   let aStart = 0;
   let bStart = 0;

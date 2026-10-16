@@ -33,8 +33,19 @@ async function compare(message) {
   }
   let alignment = null;
   if (message.kind === "buffers" && message.live === true) {
-    alignment = estimateLiveOffset(audioA, audioB, message.maxAlignmentSeconds ?? 5);
-    const aligned = alignLiveBuffers(audioA, audioB, alignment.usable ? alignment.offset_seconds : 0, model.model.config.window_sec);
+    const analysisSeconds = Math.max(model.model.config.window_sec, model.model.config.min_sec);
+    alignment = estimateLiveOffset(
+      audioA,
+      audioB,
+      message.maxAlignmentSeconds ?? 5,
+      analysisSeconds,
+    );
+    const aligned = alignLiveBuffers(
+      audioA,
+      audioB,
+      alignment.usable ? alignment.offset_seconds : 0,
+      analysisSeconds,
+    );
     audioA = aligned.audioA;
     audioB = aligned.audioB;
   }
@@ -53,7 +64,7 @@ self.onmessage = async (event) => {
   try {
     if (type === "init") {
       model = await SameRoomModel.load(event.data);
-      self.postMessage({ id, type: "ready" });
+      self.postMessage({ id, type: "ready", result: { config: model.model.config } });
     } else if (type === "compare") {
       if (!model) throw new Error("Analyzer is not loaded");
       self.postMessage({ id, type: "result", result: await compare(event.data) });

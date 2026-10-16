@@ -4,15 +4,9 @@ import { SameRoomAnalyzer } from "./same-room-analyzer.js";
 
 // Change this value to control how often a fresh live comparison is requested.
 const COMPARISON_INTERVAL_MS = 1000;
-// Keep the model input at one trained window, but retain enough history to
-// estimate WebRTC transport delay before scoring.
-const ANALYSIS_WINDOW_SECONDS = 12;
 // User-tunable: set to 0 or any larger value to change the allowed live offset.
 const MAX_ALIGNMENT_SECONDS = 3;
-const MIN_COMPARISON_SECONDS = ANALYSIS_WINDOW_SECONDS + MAX_ALIGNMENT_SECONDS;
 const CAPTURE_MARGIN_SECONDS = 1;
-const LIVE_BUFFER_SECONDS = ANALYSIS_WINDOW_SECONDS + MAX_ALIGNMENT_SECONDS + CAPTURE_MARGIN_SECONDS;
-const MAX_BUFFER_SECONDS = LIVE_BUFFER_SECONDS;
 const REMOTE_HEALTH_INTERVAL_MS = 1500;
 const REMOTE_MEDIA_GRACE_MS = 5000;
 const RAW_AUDIO_CONSTRAINTS = {
@@ -98,6 +92,10 @@ let comparisonInFlight = false;
 let inviteUrl = "";
 let sessionRole = "none";
 let analyzerReady = false;
+let modelConfig = null;
+let analysisSeconds = 0;
+let minComparisonSeconds = 0;
+let liveBufferSeconds = 0;
 let comparisonAttempts = 0;
 let completedComparisons = 0;
 let lastComparisonAttemptAt = null;
@@ -110,8 +108,8 @@ let remoteHealthTimer;
 let remoteStreamReceivedAt = null;
 let remoteHealth = { state: "waiting", detail: "Waiting for a remote audio stream." };
 
-const localBuffer = new RollingAudioBuffer(MAX_BUFFER_SECONDS);
-const remoteBuffer = new RollingAudioBuffer(MAX_BUFFER_SECONDS);
+let localBuffer = null;
+let remoteBuffer = null;
 const WAVEFORM_SECONDS = 3;
 
 function setPeerStatus(message, kind = "") {
@@ -243,7 +241,7 @@ function drawWaveform(canvas, levelOutput, buffer, color) {
   context.lineTo(cssWidth, cssHeight / 2 + 0.5);
   context.stroke();
 
-  const samples = buffer.snapshot(WAVEFORM_SECONDS);
+  const samples = buffer ? buffer.snapshot(WAVEFORM_SECONDS) : new Float32Array(0);
   if (!samples.length) {
     levelOutput.textContent = "waiting for audio";
     context.fillStyle = "#7a858d";
@@ -332,12 +330,22 @@ function connectionSummary() {
 
 function updateDebug() {
   if (!debugOutput) return;
-  const localSeconds = localBuffer.seconds;
-  const remoteSeconds = remoteBuffer.seconds;
-  localBufferLabel.textContent = `${format(localSeconds, 1)} / ${ANALYSIS_WINDOW_SECONDS.toFixed(1)} s`;
-  remoteBufferLabel.textContent = `${format(remoteSeconds, 1)} / ${ANALYSIS_WINDOW_SECONDS.toFixed(1)} s`;
-  localBufferProgress.value = Math.min(localSeconds, ANALYSIS_WINDOW_SECONDS);
-  remoteBufferProgress.value = Math.min(remoteSeconds, ANALYSIS_WINDOW_SECONDS);
+  const localSeconds = localBuffer?.seconds || 0;
+  const remoteSeconds = remoteBuffer?.seconds || 0;
+  const targetText = analysisSeconds ? `${analysisSeconds.toFixed(1)} s` : "loading model";
+  localBufferLabel.textContent = `${format(localSeconds, 1)} / ${targetText}`;
+  remoteBufferLabel.textContent = `${format(remoteSeconds, 1)} / ${targetText}`;
+  if (analysisSeconds) {
+    localBufferProgress.max = analysisSeconds;
+    remoteBufferProgress.max = analysisSeconds;
+    localBufferProgress.value = Math.min(localSeconds, analysisSeconds);
+    remoteBufferProgress.value = Math.min(remoteSeconds, analysisSeconds);
+  } else {
+    localBufferProgress.max = 1;
+    remoteBufferProgress.max = 1;
+    localBufferProgress.value = 0;
+    remoteBufferProgress.value = 0;
+  }
 
   const lastResultText = lastResult
     ? `${format(lastResult.score * 100, 1)}% ${lastResult.label} at ${formatTime(lastResultAt)}`
@@ -358,8 +366,9 @@ function updateDebug() {
     `status: peer=${peerStatus.textContent} | capture=${captureStatus.textContent}`,
     `analyzer: ${analyzerReady ? "ready" : "not ready"} | role=${sessionRole} | busy=${comparisonInFlight}`,
     `peer: id=${peer?.id || "none"} | connection=${connectionSummary()}`,
-    `local buffer: ${format(localSeconds, 3)}s ${localBuffer.totalSamples} samples ${localBuffer.sampleRate || "?"}Hz ${localBuffer.chunkCount} chunks`,
-    `remote buffer: ${format(remoteSeconds, 3)}s ${remoteBuffer.totalSamples} samples ${remoteBuffer.sampleRate || "?"}Hz ${remoteBuffer.chunkCount} chunks`,
+    `model: ${modelConfig ? `window=${modelConfig.window_sec}s min=${modelConfig.min_sec}s hop=${modelConfig.hop_sec}s maxLag=${modelConfig.max_lag}s` : "loading"}`,
+    `local buffer: ${format(localSeconds, 3)}s ${localBuffer?.totalSamples || 0} samples ${localBuffer?.sampleRate || "?"}Hz ${localBuffer?.chunkCount || 0} chunks`,
+    `remote buffer: ${format(remoteSeconds, 3)}s ${remoteBuffer?.totalSamples || 0} samples ${remoteBuffer?.sampleRate || "?"}Hz ${remoteBuffer?.chunkCount || 0} chunks`,
     `remote media: ${remoteHealth.state} | ${remoteHealth.detail}`,
     `local track: ${trackSummary(localStream)}`,
     `remote track: ${trackSummary(remoteCapture?.stream)}`,
@@ -613,7 +622,7 @@ async function runComparison() {
   }
   const localSeconds = localBuffer.seconds;
   const remoteSeconds = remoteBuffer.seconds;
-  if (Math.min(localSeconds, remoteSeconds) < MIN_COMPARISON_SECONDS) {
+  if (Math.min(localSeconds, remoteSeconds) < minComparisonSeconds) {
     setCaptureStatus(`Collecting audio… local ${format(localSeconds, 1)} s, remote ${format(remoteSeconds, 1)} s`);
     return;
   }
@@ -621,8 +630,8 @@ async function runComparison() {
   comparisonInFlight = true;
   try {
     const sampleRate = localBuffer.sampleRate;
-    const localAudio = prepareSamples(localBuffer.snapshot(LIVE_BUFFER_SECONDS), sampleRate, LIVE_BUFFER_SECONDS);
-    const remoteAudio = prepareSamples(remoteBuffer.snapshot(LIVE_BUFFER_SECONDS), remoteBuffer.sampleRate, LIVE_BUFFER_SECONDS);
+    const localAudio = prepareSamples(localBuffer.snapshot(liveBufferSeconds), sampleRate, liveBufferSeconds);
+    const remoteAudio = prepareSamples(remoteBuffer.snapshot(liveBufferSeconds), remoteBuffer.sampleRate, liveBufferSeconds);
     const result = await analyzer.compareBuffers(
       localAudio,
       remoteAudio,
@@ -753,7 +762,13 @@ async function initialize() {
   const peerCode = new URLSearchParams(window.location.search).get("peer-code");
   if (peerCode) joinCodeInput.value = peerCode;
   analyzer = new SameRoomAnalyzer({ modelUrl: "../model_output/model.json", wasmUrl: "../web-calibration/wasm_parity/wasm/same_room.wasm" });
-  await analyzer.load();
+  const ready = await analyzer.load();
+  modelConfig = ready.config;
+  analysisSeconds = Math.max(modelConfig.window_sec, modelConfig.min_sec);
+  minComparisonSeconds = analysisSeconds + MAX_ALIGNMENT_SECONDS;
+  liveBufferSeconds = minComparisonSeconds + CAPTURE_MARGIN_SECONDS;
+  localBuffer = new RollingAudioBuffer(liveBufferSeconds);
+  remoteBuffer = new RollingAudioBuffer(liveBufferSeconds);
   analyzerReady = true;
   setPeerStatus(peerCode ? "Invite loaded. Start the microphone to join." : "Ready. Create a session or enter a peer code.");
 }

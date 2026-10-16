@@ -29,11 +29,9 @@ use an HTTPS development host; microphone permissions require a secure context
 outside localhost.
 
 Live scoring uses `MAX_ALIGNMENT_SECONDS` in `app.js` as the single tuning
-value for the allowed WebRTC offset. It retains the 12-second model window
-plus that many seconds of alignment history and a one-second capture margin.
-For example, the default value of 5 waits for 17 seconds and retains 18
-seconds; setting it to 0 removes the alignment search and waits for 12 seconds
-while retaining a one-second capture margin.
-The analysis worker uses the same value for coarse energy-envelope correlation,
-trims both streams to a common 12-second window, and refreshes alignment for
+value for the allowed WebRTC offset. The model window and minimum input length
+are loaded from `model.json`; the page retains the larger of those durations,
+plus the allowed alignment history and a one-second capture margin. The
+analysis worker uses the model-derived duration for coarse energy-envelope
+correlation, trims both streams to that duration, and refreshes alignment for
 every comparison. Weak correlations are not used as alignment evidence.

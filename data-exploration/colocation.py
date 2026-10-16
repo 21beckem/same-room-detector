@@ -22,7 +22,7 @@ Each category folder needs a target score. Defaults: close=1, apart=0.5, gone=0.
 To add new categories or change targets:  --targets close=1,apart=0.5,near=0.8,gone=0
 
 How it works
-  1. Each pair is cut into overlapping 12 s windows (live audio: up to 20 s => up to 5 windows).
+  1. Each pair is cut into overlapping 5 s windows (live audio: up to 20 s => up to 8 windows).
   2. Per window, three "synchronization" features are measured within +/-1.5 s of lag:
        log_gcc_peak  waveform-level coherence (GCC-PHAT)      -> "very close"
        mel_peak      log-mel energy-envelope correlation       -> "same space"
@@ -72,7 +72,13 @@ N_MELS = 40
 FMIN, FMAX = 50.0, 7500.0
 MAX_SEC = 20.0                 # inputs are cropped to their first 20 s
 
-DEFAULT_CONFIG = dict(window_sec=12.0, hop_sec=2.0, max_lag=1.5, shift_sec=3.0, min_sec=8.0)
+DEFAULT_CONFIG = dict(
+    window_sec=5.0,
+    hop_sec=2.0,
+    max_lag=1.0,
+    shift_sec=3.0,
+    min_sec=5.0
+)
 DEFAULT_TARGETS = {"close": 1.0, "apart": 0.5, "gone": 0.0}
 FEATURES = ("log_gcc_peak", "mel_peak", "flux_peak")
 LAM_GRID = [0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0]

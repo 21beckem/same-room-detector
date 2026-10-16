@@ -1,7 +1,8 @@
-const MAX_BUFFER_SECONDS = 12;
-
 export class RollingAudioBuffer {
-  constructor(maxSeconds = MAX_BUFFER_SECONDS) {
+  constructor(maxSeconds) {
+    if (!Number.isFinite(maxSeconds) || maxSeconds <= 0) {
+      throw new Error("RollingAudioBuffer requires a positive model-derived buffer duration");
+    }
     this.maxSeconds = maxSeconds;
     this.chunks = [];
     this.totalSamples = 0;

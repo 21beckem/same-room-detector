@@ -3,6 +3,7 @@ export class SameRoomAnalyzer {
     this.worker = new Worker(workerUrl, { type: "module" });
     this.modelUrl = modelUrl;
     this.wasmUrl = wasmUrl;
+    this.config = null;
     this.nextId = 1;
     this.pending = new Map();
     this.worker.onmessage = (event) => this.handleMessage(event.data);
@@ -32,7 +33,11 @@ export class SameRoomAnalyzer {
 
   load() {
     if (!this.loadPromise) {
-      this.loadPromise = this.request({ type: "init", modelUrl: this.modelUrl, wasmUrl: this.wasmUrl });
+      this.loadPromise = this.request({ type: "init", modelUrl: this.modelUrl, wasmUrl: this.wasmUrl })
+        .then((ready) => {
+          this.config = ready.config;
+          return ready;
+        });
     }
     return this.loadPromise;
   }
