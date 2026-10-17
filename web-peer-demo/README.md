@@ -31,7 +31,7 @@ outside localhost.
 Live scoring uses `MAX_ALIGNMENT_SECONDS` in `app.js` as the single tuning
 value for the allowed WebRTC offset. The model window and minimum input length
 are loaded from `model.json`; the page retains the larger of those durations,
-plus the allowed alignment history and a one-second capture margin. The
-analysis worker uses the model-derived duration for coarse energy-envelope
-correlation, trims both streams to that duration, and refreshes alignment for
-every comparison. Weak correlations are not used as alignment evidence.
+plus the allowed alignment history and a one-second capture margin. Audio is
+normalized and aligned in the page, then `exports/compare/compare.js` prepares
+one compact packet per device and compares only those packets in its worker.
+Weak correlations are not used as alignment evidence.

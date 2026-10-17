@@ -10,7 +10,7 @@ const PROJECT_ROOT = path.resolve(DEMO_ROOT, "..");
 const DATASET_ROOT = path.join(PROJECT_ROOT, "data-exploration", "room-audio-recordings");
 const MODEL_PATH = path.join(PROJECT_ROOT, "model_output", "model.json");
 const WASM_PATH = path.join(PROJECT_ROOT, "web-calibration", "wasm_parity", "wasm", "same_room.wasm");
-const LOADER_PATH = path.join(PROJECT_ROOT, "web-calibration", "wasm_parity", "node_modules", "@assemblyscript", "loader", "index.js");
+const COMPARE_ROOT = path.join(PROJECT_ROOT, "exports", "compare");
 const PORT = Number(process.env.PORT || 3000);
 
 const MIME_TYPES = {
@@ -103,14 +103,13 @@ function serveAudio(res, pathname) {
 const staticFiles = new Map([
   ["/", [path.join(DEMO_ROOT, "index.html"), MIME_TYPES[".html"]]],
   ["/app.js", [path.join(DEMO_ROOT, "app.js"), MIME_TYPES[".js"]]],
-  ["/same-room-analyzer.js", [path.join(DEMO_ROOT, "same-room-analyzer.js"), MIME_TYPES[".js"]]],
-  ["/analysis-worker.js", [path.join(DEMO_ROOT, "analysis-worker.js"), MIME_TYPES[".js"]]],
   ["/audio.js", [path.join(DEMO_ROOT, "audio.js"), MIME_TYPES[".js"]]],
-  ["/wasm-model.js", [path.join(DEMO_ROOT, "wasm-model.js"), MIME_TYPES[".js"]]],
   ["/styles.css", [path.join(DEMO_ROOT, "styles.css"), MIME_TYPES[".css"]]],
   ["/model.json", [MODEL_PATH, MIME_TYPES[".json"]]],
   ["/same_room.wasm", [WASM_PATH, MIME_TYPES[".wasm"]]],
-  ["/vendor/assemblyscript-loader.js", [LOADER_PATH, MIME_TYPES[".js"]]],
+  ["/exports/compare/compare.js", [path.join(COMPARE_ROOT, "compare.js"), MIME_TYPES[".js"]]],
+  ["/exports/compare/compare-worker.js", [path.join(COMPARE_ROOT, "compare-worker.js"), MIME_TYPES[".js"]]],
+  ["/exports/compare/assemblyscript-loader.js", [path.join(COMPARE_ROOT, "assemblyscript-loader.js"), MIME_TYPES[".js"]]],
 ]);
 
 const server = http.createServer((req, res) => {

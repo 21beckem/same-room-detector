@@ -1,6 +1,7 @@
 import { prepareSamples } from "./audio.js";
 import { RawStreamCapture, RollingAudioBuffer } from "./live-audio.js";
-import { SameRoomAnalyzer } from "./same-room-analyzer.js";
+import { alignLiveBuffers, estimateLiveOffset } from "./live-sync.js";
+import { AudioCompare } from "../exports/compare/compare.js";
 
 // Change this value to control how often a fresh live comparison is requested.
 const COMPARISON_INTERVAL_MS = 1000;
@@ -353,7 +354,7 @@ function updateDebug() {
   const resultDetails = lastResult
     ? [
       `window scores=[${lastResult.window_scores.map((value) => format(value, 3)).join(", ")}]`,
-      `features mel=${format(lastResult.features.mel_peak, 4)} flux=${format(lastResult.features.flux_peak, 4)}`,
+      `features mel=${format(lastResult.mel_peak, 4)} flux=${format(lastResult.flux_peak, 4)}`,
       `lags mel=${format(lastResult.lags.mel, 3)}s flux=${format(lastResult.lags.flux, 3)}s`,
       lastResult.alignment
         ? `alignment offset=${format(lastResult.alignment.offset_seconds, 3)}s correlation=${format(lastResult.alignment.correlation, 3)} margin=${format(lastResult.alignment.margin, 3)} ${lastResult.alignment.usable ? "used" : "not used"}`
@@ -589,7 +590,7 @@ function renderResult(result) {
   const alignmentText = result.alignment
     ? ` · alignment ${format(result.alignment.offset_seconds)} s / ${format(result.alignment.correlation)}${result.alignment.usable ? "" : " (weak)"}`
     : "";
-  detailsOutput.textContent = `Features mel ${format(result.features.mel_peak)} · flux ${format(result.features.flux_peak)} · lags ${format(result.lags.mel)} / ${format(result.lags.flux)} s${alignmentText} · WASM ${format(result.wasm_ms, 0)} ms`;
+  detailsOutput.textContent = `Features mel ${format(result.mel_peak)} · flux ${format(result.flux_peak)} · lags ${format(result.lags.mel)} / ${format(result.lags.flux)} s${alignmentText} · WASM ${format(result.wasm_ms, 0)} ms`;
   renderConnectedScores();
   sendLocalResult();
   updateDebug();
@@ -629,16 +630,15 @@ async function runComparison() {
 
   comparisonInFlight = true;
   try {
+    const started = performance.now();
     const sampleRate = localBuffer.sampleRate;
     const localAudio = prepareSamples(localBuffer.snapshot(liveBufferSeconds), sampleRate, liveBufferSeconds);
     const remoteAudio = prepareSamples(remoteBuffer.snapshot(liveBufferSeconds), remoteBuffer.sampleRate, liveBufferSeconds);
-    const result = await analyzer.compareBuffers(
-      localAudio,
-      remoteAudio,
-      { label: "local microphone" },
-      { label: "remote microphone" },
-      { live: true, maxAlignmentSeconds: MAX_ALIGNMENT_SECONDS },
-    );
+    const alignment = estimateLiveOffset(localAudio, remoteAudio, MAX_ALIGNMENT_SECONDS, analysisSeconds);
+    const aligned = alignLiveBuffers(localAudio, remoteAudio, alignment.usable ? alignment.offset_seconds : 0, analysisSeconds);
+    const [preparedA, preparedB] = await Promise.all([analyzer.prepare(aligned.audioA), analyzer.prepare(aligned.audioB)]);
+    const result = await analyzer.compare(preparedA, preparedB);
+    Object.assign(result, { alignment, wasm_ms: performance.now() - started, total_ms: performance.now() - started });
     renderResult(result);
     setCaptureStatus(`Live comparison updated. Next comparison in ${format(COMPARISON_INTERVAL_MS / 1000, 1)} s.`, "good");
   } catch (error) {
@@ -761,9 +761,8 @@ async function joinSession() {
 async function initialize() {
   const peerCode = new URLSearchParams(window.location.search).get("peer-code");
   if (peerCode) joinCodeInput.value = peerCode;
-  analyzer = new SameRoomAnalyzer({ modelUrl: "../model_output/model.json", wasmUrl: "../web-calibration/wasm_parity/wasm/same_room.wasm" });
-  const ready = await analyzer.load();
-  modelConfig = ready.config;
+  analyzer = await AudioCompare.fromObject({ modelUrl: "../model_output/model.json", wasmUrl: "../web-calibration/wasm_parity/wasm/same_room.wasm" });
+  modelConfig = analyzer.config;
   analysisSeconds = Math.max(modelConfig.window_sec, modelConfig.min_sec);
   minComparisonSeconds = analysisSeconds + MAX_ALIGNMENT_SECONDS;
   liveBufferSeconds = minComparisonSeconds + CAPTURE_MARGIN_SECONDS;

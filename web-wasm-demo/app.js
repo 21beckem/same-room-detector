@@ -1,4 +1,5 @@
-import { SameRoomAnalyzer } from "./same-room-analyzer.js";
+import { fetchPreparedAudio } from "./audio.js";
+import { AudioCompare } from "/exports/compare/compare.js";
 
 const selectA = document.querySelector("#recording-a");
 const selectB = document.querySelector("#recording-b");
@@ -7,6 +8,19 @@ const status = document.querySelector("#status");
 const resultPanel = document.querySelector("#result");
 let recordings = [];
 let analyzer;
+
+function pairDetails(a, b) {
+  const sameGroup = a.cat === b.cat && a.gid === b.gid;
+  const expected = sameGroup ? (analyzer.model.targets[a.cat] ?? 0) : 0;
+  const key = `${a.cat}/g${a.gid}`;
+  const heldOut = sameGroup ? (analyzer.model.cv?.held_out_scores?.[key] ?? null) : null;
+  return {
+    pair: { a, b },
+    expected,
+    truth: sameGroup ? `same group (${a.cat}), target ${expected.toFixed(2)}` : "different groups, target 0.00",
+    held_out_score: heldOut,
+  };
+}
 
 function optionText(item) { return `${item.label} — ${item.path.split("/").pop()}`; }
 
@@ -69,8 +83,7 @@ async function initialize() {
   populateSelect(selectA);
   populateSelect(selectB);
   selectB.selectedIndex = Math.min(1, recordings.length - 1);
-  analyzer = new SameRoomAnalyzer();
-  await analyzer.load();
+  analyzer = await AudioCompare.fromObject({ modelUrl: "/model.json", wasmUrl: "/same_room.wasm" });
   selectA.disabled = false;
   selectB.disabled = false;
   compareButton.disabled = false;
@@ -88,7 +101,12 @@ compareButton.addEventListener("click", async () => {
   status.textContent = "Comparing…";
   resultPanel.hidden = true;
   try {
-    renderResult(await analyzer.compare(a, b));
+    const started = performance.now();
+    const [audioA, audioB] = await Promise.all([fetchPreparedAudio(a.url), fetchPreparedAudio(b.url)]);
+    const [preparedA, preparedB] = await Promise.all([analyzer.prepare(audioA), analyzer.prepare(audioB)]);
+    const result = await analyzer.compare(preparedA, preparedB);
+    Object.assign(result, pairDetails(a, b), { wasm_ms: result.pair_ms, total_ms: performance.now() - started });
+    renderResult(result);
     status.textContent = "Comparison complete.";
   } catch (error) {
     status.textContent = `Could not compare recordings: ${error.message}`;
@@ -98,3 +116,5 @@ compareButton.addEventListener("click", async () => {
 });
 
 initialize().catch((error) => { status.textContent = `Could not start demo: ${error.message}`; });
+
+window.addEventListener("beforeunload", () => analyzer?.dispose());
