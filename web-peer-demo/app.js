@@ -353,8 +353,8 @@ function updateDebug() {
   const resultDetails = lastResult
     ? [
       `window scores=[${lastResult.window_scores.map((value) => format(value, 3)).join(", ")}]`,
-      `features gcc=${format(lastResult.features.gcc_peak, 4)} mel=${format(lastResult.features.mel_peak, 4)} flux=${format(lastResult.features.flux_peak, 4)}`,
-      `lags gcc=${format(lastResult.lags.gcc, 3)}s mel=${format(lastResult.lags.mel, 3)}s flux=${format(lastResult.lags.flux, 3)}s`,
+      `features mel=${format(lastResult.features.mel_peak, 4)} flux=${format(lastResult.features.flux_peak, 4)}`,
+      `lags mel=${format(lastResult.lags.mel, 3)}s flux=${format(lastResult.lags.flux, 3)}s`,
       lastResult.alignment
         ? `alignment offset=${format(lastResult.alignment.offset_seconds, 3)}s correlation=${format(lastResult.alignment.correlation, 3)} margin=${format(lastResult.alignment.margin, 3)} ${lastResult.alignment.usable ? "used" : "not used"}`
         : "alignment not used",
@@ -589,7 +589,7 @@ function renderResult(result) {
   const alignmentText = result.alignment
     ? ` · alignment ${format(result.alignment.offset_seconds)} s / ${format(result.alignment.correlation)}${result.alignment.usable ? "" : " (weak)"}`
     : "";
-  detailsOutput.textContent = `Features GCC ${format(result.features.gcc_peak)} · mel ${format(result.features.mel_peak)} · flux ${format(result.features.flux_peak)} · lags ${format(result.lags.gcc)} / ${format(result.lags.mel)} / ${format(result.lags.flux)} s${alignmentText} · WASM ${format(result.wasm_ms, 0)} ms`;
+  detailsOutput.textContent = `Features mel ${format(result.features.mel_peak)} · flux ${format(result.features.flux_peak)} · lags ${format(result.lags.mel)} / ${format(result.lags.flux)} s${alignmentText} · WASM ${format(result.wasm_ms, 0)} ms`;
   renderConnectedScores();
   sendLocalResult();
   updateDebug();

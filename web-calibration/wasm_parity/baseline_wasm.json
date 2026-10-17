@@ -1,0 +1,205 @@
+
+> test:wasm
+> node wasm_parity_runner.js
+
+{
+  "implementation": "assemblyscript-wasm",
+  "files_loaded": 22,
+  "pairs_compared": 4,
+  "exact_label_matches": 4,
+  "max_absolute_difference": 0.03552587612287983,
+  "max_relative_difference": 0.08440144183171149,
+  "max_score_difference": 0.006586277540986896,
+  "score_tolerance": 0.001,
+  "timing_ms": {
+    "average": 943.2946,
+    "min": 832.1192000000001,
+    "max": 1137.7504,
+    "samples": [
+      848.5491,
+      832.1192000000001,
+      954.7597000000001,
+      1137.7504
+    ]
+  },
+  "pairs": [
+    {
+      "pair": "apart/g5/A vs apart/g5/B",
+      "python_score": 0.26982658901081014,
+      "wasm_score": 0.27641286655179703,
+      "delta": 0.006586277540986896,
+      "python_label": "middle",
+      "wasm_label": "middle",
+      "wasm_ms": 848.5491
+    },
+    {
+      "pair": "close/g1/A vs close/g1/B",
+      "python_score": 0.9999871117819695,
+      "wasm_score": 0.9999871926643762,
+      "delta": 8.088240666115354e-8,
+      "python_label": "close",
+      "wasm_label": "close",
+      "wasm_ms": 832.1192000000001
+    },
+    {
+      "pair": "close/g10/A vs close/g10/B",
+      "python_score": 0.9999971346763112,
+      "wasm_score": 0.9999971328246651,
+      "delta": -1.8516461697259956e-9,
+      "python_label": "close",
+      "wasm_label": "close",
+      "wasm_ms": 954.7597000000001
+    },
+    {
+      "pair": "close/g11/A vs close/g11/B",
+      "python_score": 0.9999997207725131,
+      "wasm_score": 0.9999997202783569,
+      "delta": -4.941561604354661e-10,
+      "python_label": "close",
+      "wasm_label": "close",
+      "wasm_ms": 1137.7504
+    }
+  ],
+  "first_differences": [
+    {
+      "path": "apart/g5/A|apart/g5/B.score",
+      "python": 0.26982658901081014,
+      "wasm": 0.27641286655179703,
+      "absolute": 0.006586277540986896,
+      "relative": 0.023827680755782375
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.window_scores.0",
+      "python": 0.17882877966956431,
+      "wasm": 0.16475152730237363,
+      "absolute": 0.014077252367190679,
+      "relative": 0.07871916585911004
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.window_scores.1",
+      "python": 0.09006152419629576,
+      "wasm": 0.09836354960679428,
+      "absolute": 0.008302025410498515,
+      "relative": 0.08440144183171149
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.window_scores.2",
+      "python": 0.29112488058919306,
+      "wasm": 0.29342793355454155,
+      "absolute": 0.0023030529653484955,
+      "relative": 0.007848785688021111
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.window_scores.3",
+      "python": 0.24525132519304318,
+      "wasm": 0.25543535554871577,
+      "absolute": 0.010184030355672585,
+      "relative": 0.03986930600815094
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.window_scores.4",
+      "python": 0.3429330557546399,
+      "wasm": 0.338368942779165,
+      "absolute": 0.004564112975474877,
+      "relative": 0.013309049387004519
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.window_scores.5",
+      "python": 0.6291216209425949,
+      "wasm": 0.6646474970654748,
+      "absolute": 0.03552587612287983,
+      "relative": 0.053450703237027546
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.features.gcc_peak",
+      "python": 0.018770815645112644,
+      "wasm": 0.01933850054542996,
+      "absolute": 0.0005676849003173161,
+      "relative": 0.029355166342070423
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.features.mel_peak",
+      "python": 0.3053012759571059,
+      "wasm": 0.3053012759571072,
+      "absolute": 1.3322676295501878e-15,
+      "relative": 4.363780090252104e-15
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.features.flux_peak",
+      "python": 0.2926540587867374,
+      "wasm": 0.2926540587867391,
+      "absolute": 1.7208456881689926e-15,
+      "relative": 5.88013607363975e-15
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.lags.gcc",
+      "python": 0.619,
+      "wasm": 0.619,
+      "absolute": 0,
+      "relative": 0
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.lags.mel",
+      "python": 0.69,
+      "wasm": 0.69,
+      "absolute": 0,
+      "relative": 0
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.lags.flux",
+      "python": 0.68,
+      "wasm": 0.68,
+      "absolute": 0,
+      "relative": 0
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.quality.level_dbfs",
+      "python": -30.17276588507103,
+      "wasm": -30.17276588507101,
+      "absolute": 2.1316282072803006e-14,
+      "relative": 7.064742474719542e-16
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.quality.activity_db",
+      "python": 1.9854931289925715,
+      "wasm": 1.9854931289925757,
+      "absolute": 4.218847493575595e-15,
+      "relative": 2.124836108456445e-15
+    },
+    {
+      "path": "apart/g5/A|apart/g5/B.seconds",
+      "python": 15.44,
+      "wasm": 15.44,
+      "absolute": 0,
+      "relative": 0
+    },
+    {
+      "path": "close/g1/A|close/g1/B.score",
+      "python": 0.9999871117819695,
+      "wasm": 0.9999871926643762,
+      "absolute": 8.088240666115354e-8,
+      "relative": 8.088344256254884e-8
+    },
+    {
+      "path": "close/g1/A|close/g1/B.window_scores.0",
+      "python": 0.9999363985512664,
+      "wasm": 0.9999390816000995,
+      "absolute": 0.0000026830488331075486,
+      "relative": 0.0000026832122901068552
+    },
+    {
+      "path": "close/g1/A|close/g1/B.window_scores.1",
+      "python": 0.9999902679650013,
+      "wasm": 0.9999901733581413,
+      "absolute": 9.460686001272478e-8,
+      "relative": 9.460778073895807e-8
+    },
+    {
+      "path": "close/g1/A|close/g1/B.window_scores.2",
+      "python": 0.9999895025797738,
+      "wasm": 0.9999896310706731,
+      "absolute": 1.2849089925381918e-7,
+      "relative": 1.284922315806875e-7
+    }
+  ]
+}

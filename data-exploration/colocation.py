@@ -20,11 +20,9 @@ Score meaning:  ~1.0 = close (like your <= 3 ft recordings)
 Folder layout (same as before):  ROOT/<category>/group-N/<anything>_A.wav and _B.wav
 Each category folder needs a target score. Defaults: close=1, apart=0.5, gone=0.
 To add new categories or change targets:  --targets close=1,apart=0.5,near=0.8,gone=0
-
 How it works
   1. Each pair is cut into overlapping 5 s windows (live audio: up to 20 s => up to 8 windows).
-  2. Per window, three "synchronization" features are measured within +/-1.5 s of lag:
-       log_gcc_peak  waveform-level coherence (GCC-PHAT)      -> "very close"
+  2. Per window, two compact "synchronization" features are measured within the configured lag:
        mel_peak      log-mel energy-envelope correlation       -> "same space"
        flux_peak     onset (spectral flux) correlation         -> "shared events"
   3. A small logistic regression maps them to a score. Targets can be fractional, so the
@@ -50,7 +48,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy import signal
-from scipy.fft import irfft, next_fast_len, rfft, rfftfreq
+from scipy.fft import irfft, next_fast_len, rfft
 from scipy.io import wavfile
 from scipy.ndimage import uniform_filter1d
 from scipy.special import expit
@@ -80,7 +78,7 @@ DEFAULT_CONFIG = dict(
     min_sec=5.0
 )
 DEFAULT_TARGETS = {"close": 1.0, "apart": 0.5, "gone": 0.0}
-FEATURES = ("log_gcc_peak", "mel_peak", "flux_peak")
+FEATURES = ("mel_peak", "flux_peak")
 LAM_GRID = [0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0]
 QUALITY = dict(min_level_dbfs=-60.0, min_activity_db=1.0, max_window_spread=0.5)
 KIND_COLORS = {"cross": "0.6", "shifted": "tab:purple", "gone": "tab:red",
@@ -173,20 +171,6 @@ def segment(clip, s0, n):
     return clip.x[s0:s0 + n], clip.mel_db[:, f0:f0 + nf], clip.flux[f0:f0 + nf]
 
 
-def gcc_phat(xa, xb, fmin=100.0, fmax=4000.0):
-    """Band-limited GCC-PHAT. Returns lags (s) and a curve whose maximum possible value is 1."""
-    n = min(len(xa), len(xb))
-    nfft = next_fast_len(2 * n - 1)
-    r = rfft(xa[:n], nfft) * np.conj(rfft(xb[:n], nfft))
-    r /= np.abs(r) + 1e-12
-    f = rfftfreq(nfft, 1.0 / SR)
-    band = (f >= fmin) & (f <= fmax)
-    r[~band] = 0
-    cc = irfft(r, nfft) / (2.0 * band.sum() / nfft)
-    cc = np.concatenate([cc[nfft - (n - 1):], cc[:n]])
-    return np.arange(-(n - 1), n) / SR, cc
-
-
 def xcorr_unbiased(a, b):
     """a, b: (bands, T) or (T,) with unit variance. Mean-over-bands correlation per lag."""
     a, b = np.atleast_2d(a), np.atleast_2d(b)
@@ -206,17 +190,15 @@ def peak_in_window(lags, cc, max_lag):
 
 def window_features(sa, sb, max_lag):
     """Synchronization features for one aligned window of recording A and recording B."""
-    (xa, ma, fa), (xb, mb, fb) = sa, sb
-    n = min(len(xa), len(xb))
+    (_xa, ma, fa), (_xb, mb, fb) = sa, sb
     t = min(ma.shape[1], mb.shape[1])
-    gp, gl = peak_in_window(*gcc_phat(xa[:n], xb[:n]), max_lag)
     mp, ml = peak_in_window(*xcorr_unbiased(zscore(ma[:, :t], axis=1), zscore(mb[:, :t], axis=1)), max_lag)
     fp, fl = peak_in_window(*xcorr_unbiased(zscore(fa[:t]), zscore(fb[:t])), max_lag)
-    return dict(gcc_peak=gp, gcc_lag=gl, mel_peak=mp, mel_lag=ml, flux_peak=fp, flux_lag=fl)
+    return dict(mel_peak=mp, mel_lag=ml, flux_peak=fp, flux_lag=fl)
 
 
-def feature_vector(f):
-    return np.array([math.log10(max(f["gcc_peak"], 1e-3)), f["mel_peak"], f["flux_peak"]])
+def feature_vector(f, feature_names=FEATURES):
+    return np.array([f[name] for name in feature_names])
 
 
 def window_plan(n, cfg):
@@ -261,8 +243,8 @@ def fit_logistic(x, t, w, lam):
     return beta
 
 
-def row_arrays(rows):
-    x = np.array([feature_vector(r) for r in rows])
+def row_arrays(rows, feature_names=FEATURES):
+    x = np.array([feature_vector(r, feature_names) for r in rows])
     t = np.array([r["target"] for r in rows], dtype=float)
     w = 1.0 / np.array([r["nwin"] for r in rows], dtype=float)   # each pair counts once
     neg = t == 0
@@ -271,12 +253,12 @@ def row_arrays(rows):
     return x, t, w
 
 
-def fit_model(rows, lam):
-    x, t, w = row_arrays(rows)
+def fit_model(rows, lam, feature_names=FEATURES):
+    x, t, w = row_arrays(rows, feature_names)
     mu = np.average(x, axis=0, weights=w)
     sd = np.maximum(np.sqrt(np.average((x - mu) ** 2, axis=0, weights=w)), 1e-6)
     beta = fit_logistic((x - mu) / sd, t, w, lam)
-    return dict(features=list(FEATURES), mean=mu.tolist(), std=sd.tolist(),
+    return dict(features=list(feature_names), mean=mu.tolist(), std=sd.tolist(),
                 intercept=float(beta[0]), coef=beta[1:].tolist(), lam=float(lam))
 
 
@@ -345,7 +327,7 @@ def build_rows(recs, targets, cfg, shift_negatives=True):
         for k, (sa, sb) in enumerate(windows):
             rows.append(dict(pair_id=pair_id, kind=kind, groups=frozenset(groups), target=target,
                              within=within, win=k, nwin=len(windows),
-                             **window_features(sa, sb, cfg["max_lag"])))
+                              **window_features(sa, sb, cfg["max_lag"])))
 
     by_key = {}
     for r in recs:
@@ -377,15 +359,15 @@ def build_rows(recs, targets, cfg, shift_negatives=True):
 # --------------------------------------------------------------------------- #
 # Cross-validation
 # --------------------------------------------------------------------------- #
-def logo_cv(rows, lam):
+def logo_cv(rows, lam, feature_names=FEATURES):
     """Leave-one-group-out. Returns {pair_id: held-out mean logit}."""
     keys = sorted({next(iter(r["groups"])) for r in rows if r["within"]})
     preds = {}
     for g in keys:
         train = [r for r in rows if g not in r["groups"]]
         test = [r for r in rows if g in r["groups"]]
-        m = fit_model(train, lam)
-        for pid, v in pair_means(test, model_logits(m, [feature_vector(r) for r in test])).items():
+        m = fit_model(train, lam, feature_names)
+        for pid, v in pair_means(test, model_logits(m, [feature_vector(r, feature_names) for r in test])).items():
             preds.setdefault(pid, []).append(v)
     return {pid: float(np.mean(v)) for pid, v in preds.items()}
 
@@ -433,9 +415,10 @@ def score_clips(model, ca, cb):
     if len(window_scores) > 1 and max(window_scores) - min(window_scores) > QUALITY["max_window_spread"]:
         notes.append("windows disagree with each other")
     med = lambda k: float(np.median([f[k] for f in feats]))
+    result_features = dict(mel_peak=med("mel_peak"), flux_peak=med("flux_peak"))
+    result_lags = dict(mel=med("mel_lag"), flux=med("flux_lag"))
     return dict(score=score, label=band_label(score), window_scores=window_scores,
-                features=dict(gcc_peak=med("gcc_peak"), mel_peak=med("mel_peak"), flux_peak=med("flux_peak")),
-                lags=dict(gcc=med("gcc_lag"), mel=med("mel_lag"), flux=med("flux_lag")),
+                features=result_features, lags=result_lags,
                 quality=dict(ok=not notes, notes=notes, level_dbfs=level, activity_db=activity),
                 seconds=n / SR)
 
@@ -510,13 +493,15 @@ def plot_cv(meta, cv_scores, targets, path):
     plt.close(fig)
 
 
-def plot_space(rows, targets, path):
+def plot_space(rows, targets, path, feature_names=FEATURES):
     order = kind_order(targets)
     pairs = {}
     for r in rows:
-        pairs.setdefault(r["pair_id"], dict(kind=r["kind"], v=[]))["v"].append(feature_vector(r))
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    for ax, (i, j) in zip(axes, [(0, 1), (1, 2)]):
+        pairs.setdefault(r["pair_id"], dict(kind=r["kind"], v=[]))["v"].append(feature_vector(r, feature_names))
+    feature_pairs = list(combinations(range(len(feature_names)), 2))
+    fig, axes = plt.subplots(1, len(feature_pairs), figsize=(7 * len(feature_pairs), 6), squeeze=False)
+    axes = axes[0]
+    for ax, (i, j) in zip(axes, feature_pairs):
         for kind in order:
             sel = [(pid, np.mean(d["v"], axis=0)) for pid, d in pairs.items() if d["kind"] == kind]
             if not sel:
@@ -530,8 +515,8 @@ def plot_space(rows, targets, path):
                 for (pid, _), p in zip(sel, pts):
                     ax.annotate(pid.split("/")[-1], (p[i], p[j]), fontsize=8, xytext=(5, 3),
                                 textcoords="offset points")
-        ax.set_xlabel(FEATURES[i])
-        ax.set_ylabel(FEATURES[j])
+        ax.set_xlabel(feature_names[i])
+        ax.set_ylabel(feature_names[j])
         ax.grid(alpha=0.25)
     axes[0].legend()
     fig.suptitle("Feature space (each point = one pair, mean over windows)")
@@ -564,8 +549,8 @@ def cmd_train(args):
     print(f"{len(rows)} windows from {len(meta)} pairs: " + ", ".join(f"{k}={v}" for k, v in kinds.items()))
 
     with open(out / "train_windows.csv", "w", newline="") as fh:
-        cols = ["pair_id", "kind", "target", "win", "nwin", "gcc_peak", "gcc_lag", "mel_peak",
-                "mel_lag", "flux_peak", "flux_lag"]
+        cols = ["pair_id", "kind", "target", "win", "nwin", "mel_peak", "mel_lag",
+                "flux_peak", "flux_lag"]
         w = csv.DictWriter(fh, fieldnames=cols)
         w.writeheader()
         for r in rows:
@@ -574,7 +559,7 @@ def cmd_train(args):
     print("\nChoosing regularisation by leave-one-group-out log-loss:")
     results = {}
     for lam in (LAM_GRID if args.lam is None else [args.lam]):
-        preds = logo_cv(rows, lam)
+        preds = logo_cv(rows, lam, FEATURES)
         results[lam] = (cv_loss(meta, preds), preds)
         print(f"  lam={lam:<7g} CV loss={results[lam][0]:.4f}")
     best = min(results, key=lambda k: results[k][0])
@@ -582,7 +567,7 @@ def cmd_train(args):
     cv_scores = {p: float(expit(z)) for p, z in cv_z.items()}
     print(f"-> using lam={best:g}")
 
-    model = fit_model(rows, best)
+    model = fit_model(rows, best, FEATURES)
     model["config"] = cfg
     model["targets"] = targets
     model["trained_recordings"] = sorted(r.label for r in recs)
@@ -631,7 +616,7 @@ def cmd_train(args):
         for p, m in sorted(meta.items(), key=lambda kv: -cv_scores[kv[0]]):
             w.writerow([p, m["kind"], m["target"], round(cv_scores[p], 5), round(float(expit(full_z[p])), 5)])
     plot_cv(meta, cv_scores, targets, out / "cv_scores.png")
-    plot_space(rows, targets, out / "feature_space.png")
+    plot_space(rows, targets, out / "feature_space.png", FEATURES)
     print(f"\nWrote model.json, cv_pairs.csv, train_windows.csv, cv_scores.png, feature_space.png to {out.resolve()}")
 
 
@@ -645,8 +630,8 @@ def cmd_score(args):
     print(f"score: {res['score']:.3f}  ({res['label']})   from {res['seconds']:.1f} s of audio")
     print("window scores: " + "  ".join(f"{s:.2f}" for s in res["window_scores"]))
     f, l = res["features"], res["lags"]
-    print(f"features: gcc_peak {f['gcc_peak']:.3f}  mel_peak {f['mel_peak']:.2f}  flux_peak {f['flux_peak']:.2f}")
-    print(f"peak lags (s): gcc {l['gcc']:+.2f}  mel {l['mel']:+.2f}  flux {l['flux']:+.2f}")
+    print("features: " + "  ".join(f"{name} {f[name]:.3f}" for name in FEATURES))
+    print("peak lags (s): " + "  ".join(f"{name} {l[name]:+.2f}" for name in ("mel", "flux")))
     q = res["quality"]
     print("quality: " + ("ok" if q["ok"] else "LOW - " + "; ".join(q["notes"])) +
           f"   (level {q['level_dbfs']:.0f} dBFS, activity {q['activity_db']:.1f} dB)")

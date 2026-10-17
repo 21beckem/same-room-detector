@@ -365,25 +365,6 @@ function segment(clip, s0, n) {
   };
 }
 
-function gccPhat(xa, xb, fmin = 100, fmax = 4000) {
-  const n = Math.min(xa.length, xb.length);
-  const nfft = nextFastLen(2 * n - 1);
-  const a = rfft(xa.slice(0, n), nfft), b = rfft(xb.slice(0, n), nfft);
-  for (let i = 0; i < a.re.length; i += 1) {
-    const real = a.re[i] * b.re[i] + a.im[i] * b.im[i];
-    const imag = a.im[i] * b.re[i] - a.re[i] * b.im[i];
-    const frequency = i * SR / nfft;
-    const allowed = frequency >= fmin && frequency <= fmax;
-    const magnitude = Math.sqrt(real * real + imag * imag);
-    a.re[i] = allowed ? real / (magnitude + 1e-12) : 0;
-    a.im[i] = allowed ? imag / (magnitude + 1e-12) : 0;
-  }
-  const cc0 = irfft({ re: a.re, im: a.im, n: nfft });
-  const scale = 2 * a.re.reduce((count, _, i) => count + (i * SR / nfft >= fmin && i * SR / nfft <= fmax ? 1 : 0), 0) / nfft;
-  const cc = Float64Array.from(cc0, (v) => v / scale);
-  return { lags: Array.from({ length: 2 * n - 1 }, (_, i) => (i - (n - 1)) / SR), cc: Array.from(cc.slice(nfft - (n - 1))).concat(Array.from(cc.slice(0, n))) };
-}
-
 function xcorrUnbiased(a, b) {
   const rowsA = Array.isArray(a[0]) || ArrayBuffer.isView(a[0]) ? a : [a];
   const rowsB = Array.isArray(b[0]) || ArrayBuffer.isView(b[0]) ? b : [b];
@@ -409,17 +390,15 @@ function peakInWindow(lags, cc, maxLag) {
 }
 
 function windowFeatures(sa, sb, maxLag) {
-  const n = Math.min(sa.x.length, sb.x.length);
   const t = Math.min(sa.mel[0].length, sb.mel[0].length);
-  const [gp, gl] = peakInWindow(...Object.values(gccPhat(sa.x.slice(0, n), sb.x.slice(0, n))), maxLag);
   const ma = zscore(sa.mel.map((row) => row.slice(0, t)), 1);
   const mb = zscore(sb.mel.map((row) => row.slice(0, t)), 1);
   const [mp, ml] = peakInWindow(...Object.values(xcorrUnbiased(ma, mb)), maxLag);
   const [fp, fl] = peakInWindow(...Object.values(xcorrUnbiased(zscore(sa.flux.slice(0, t)), zscore(sb.flux.slice(0, t)))), maxLag);
-  return { gcc_peak: gp, gcc_lag: gl, mel_peak: mp, mel_lag: ml, flux_peak: fp, flux_lag: fl };
+  return { mel_peak: mp, mel_lag: ml, flux_peak: fp, flux_lag: fl };
 }
 
-function featureVector(f) { return [Math.log10(Math.max(f.gcc_peak, 1e-3)), f.mel_peak, f.flux_peak]; }
+function featureVector(f) { return [f.mel_peak, f.flux_peak]; }
 function modelLogits(model, vectors) { return vectors.map((vector) => model.intercept + vector.reduce((sum, value, i) => sum + ((value - model.mean[i]) / model.std[i]) * model.coef[i], 0)); }
 function expit(value) { return 1 / (1 + Math.exp(-value)); }
 function windowPlan(n, cfg) {
@@ -451,8 +430,8 @@ function scoreClips(model, ca, cb) {
   if (windowScores.length > 1 && Math.max(...windowScores) - Math.min(...windowScores) > 0.5) notes.push("windows disagree with each other");
   return {
     score, label: bandLabel(score), window_scores: windowScores,
-    features: { gcc_peak: median(features.map((f) => f.gcc_peak)), mel_peak: median(features.map((f) => f.mel_peak)), flux_peak: median(features.map((f) => f.flux_peak)) },
-    lags: { gcc: median(features.map((f) => f.gcc_lag)), mel: median(features.map((f) => f.mel_lag)), flux: median(features.map((f) => f.flux_lag)) },
+    features: { mel_peak: median(features.map((f) => f.mel_peak)), flux_peak: median(features.map((f) => f.flux_peak)) },
+    lags: { mel: median(features.map((f) => f.mel_lag)), flux: median(features.map((f) => f.flux_lag)) },
     quality: { ok: notes.length === 0, notes, level_dbfs: level, activity_db: activity }, seconds: n / SR,
   };
 }

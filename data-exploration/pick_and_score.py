@@ -54,8 +54,8 @@ def describe(item_a, item_b, res, targets, held_out):
                       f"(model never saw this pair's group)", GREEN if h_ok else RED))
     lines += [
         ("Windows: " + "  ".join(f"{s:.2f}" for s in res["window_scores"]) + f"   ({res['seconds']:.1f} s)", 0),
-        (f"Features: gcc_peak {f['gcc_peak']:.3f}   mel_peak {f['mel_peak']:.2f}   flux_peak {f['flux_peak']:.2f}", 0),
-        (f"Peak lags (s): gcc {lag['gcc']:+.2f}   mel {lag['mel']:+.2f}   flux {lag['flux']:+.2f}", 0),
+        (f"Features: mel_peak {f['mel_peak']:.2f}   flux_peak {f['flux_peak']:.2f}", 0),
+        (f"Peak lags (s): mel {lag['mel']:+.2f}   flux {lag['flux']:+.2f}", 0),
         ("Quality: " + ("ok" if q["ok"] else "LOW - " + "; ".join(q["notes"])) +
          f"   (level {q['level_dbfs']:.0f} dBFS, activity {q['activity_db']:.1f} dB)",
          0 if q["ok"] else YELLOW),

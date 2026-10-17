@@ -22,8 +22,6 @@ Requires: numpy, scipy, matplotlib   (soundfile is used for loading if installed
 
 Features (computed per pair; "z" = how far the peak sits above what you get by
 sliding the clips against each other by amounts that cannot be the true offset):
-    gcc_*    GCC-PHAT cross-correlation of the raw waveforms (100-4000 Hz).
-             Strong for shared broadband sounds (speech, claps, door slams).
     mel_*    Correlation of the log-mel spectrogram over time, averaged across bands.
              Catches shared energy changes even when waveforms are not phase-aligned.
     flux_*   Correlation of onset strength (spectral flux). Shared "events".
@@ -50,7 +48,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy import signal
-from scipy.fft import irfft, next_fast_len, rfft, rfftfreq
+from scipy.fft import irfft, next_fast_len, rfft
 from scipy.io import wavfile
 from scipy.ndimage import maximum_filter1d, median_filter, uniform_filter1d
 from scipy.stats import rankdata
@@ -72,7 +70,6 @@ COLORS = {"cross": "0.55", "gone": "tab:red", "apart": "tab:orange", "close": "t
 
 # (column, higher_means_more_similar)
 FEATURES = [
-    ("gcc_z", True), ("gcc_peak", True),
     ("mel_z", True), ("mel_peak", True),
     ("flux_z", True), ("flux_peak", True),
     ("spec_corr_resid", True), ("tonal_corr", True),
@@ -208,19 +205,6 @@ def discover(root):
 # --------------------------------------------------------------------------- #
 # Pair features
 # --------------------------------------------------------------------------- #
-def gcc_phat(xa, xb, fmin=100.0, fmax=4000.0):
-    """Band-limited GCC-PHAT. Returns lags (s) and a curve whose max possible value is 1."""
-    n = min(len(xa), len(xb))
-    nfft = next_fast_len(2 * n - 1)
-    r = rfft(xa[:n], nfft) * np.conj(rfft(xb[:n], nfft))
-    r /= np.abs(r) + 1e-12
-    band = (rfftfreq(nfft, 1.0 / SR) >= fmin) & (rfftfreq(nfft, 1.0 / SR) <= fmax)
-    r[~band] = 0
-    cc = irfft(r, nfft) / (2.0 * band.sum() / nfft)
-    cc = np.concatenate([cc[nfft - (n - 1):], cc[:n]])
-    return np.arange(-(n - 1), n) / SR, cc
-
-
 def xcorr_unbiased(a, b):
     """a, b: (bands, T) unit-variance rows. Mean-over-bands correlation estimate per lag."""
     a, b = np.atleast_2d(a), np.atleast_2d(b)
@@ -267,7 +251,6 @@ def pair_features(a, b, args, ref_prof, keep_curves):
     feats, curves = {}, {}
 
     inputs = {
-        "gcc": gcc_phat(a.x, b.x),
         "mel": xcorr_unbiased(a.mel_z[:, :t], b.mel_z[:, :t]),
         "flux": xcorr_unbiased(a.flux[:t], b.flux[:t]),
     }
@@ -331,7 +314,7 @@ def print_reports(recs, rows):
               f"{edge:>13.2f}   {extra}")
     print("* 'cross 95th' = value that only 5% of cross pairs exceed (5th pct if lower = more similar).")
 
-    show = ["gcc_z", "mel_z", "flux_z", "spec_corr_resid", "tonal_corr"]
+    show = ["mel_z", "flux_z", "spec_corr_resid", "tonal_corr"]
     print("\n=== Within-group pairs: value (percentile = % of cross pairs that look less similar) ===")
     print(f"{'pair':<12}" + "".join(f"{f:>22}" for f in show))
     for r in within:
@@ -342,14 +325,14 @@ def print_reports(recs, rows):
         print(f"{r['pair_type'] + ' g' + str(r['group_a']):<12}" + "".join(f"{c:>22}" for c in cells))
 
     print("\n=== Within-group lags (s) and signal quality ===")
-    print("If gcc/mel/flux agree on the lag, the match is probably real. Lag should be < ~1 s.")
-    print(f"{'pair':<12}{'gcc_lag':>9}{'mel_lag':>9}{'flux_lag':>10}{'min_rms':>9}{'min_dyn':>9}")
+    print("Lag should be < ~1 s. Mel and onset-flux measure shared events without waveform exchange.")
+    print(f"{'pair':<12}{'mel_lag':>9}{'flux_lag':>10}{'min_rms':>9}{'min_dyn':>9}")
     for r in within:
-        print(f"{r['pair_type'] + ' g' + str(r['group_a']):<12}{r['gcc_lag']:>9.3f}{r['mel_lag']:>9.3f}"
+        print(f"{r['pair_type'] + ' g' + str(r['group_a']):<12}{r['mel_lag']:>9.3f}"
               f"{r['flux_lag']:>10.3f}{r['min_rms_dbfs']:>9.1f}{r['min_dyn_db']:>9.2f}")
 
     print("\n=== Highest-scoring CROSS pairs (look for suspicious ones: same room, same hallway?) ===")
-    for feat in ("gcc_z", "mel_z", "flux_z"):
+    for feat in ("mel_z", "flux_z"):
         top = sorted(cross, key=lambda r: -np.nan_to_num(r[feat], nan=-1e9))[:3]
         print(f"{feat}: " + "; ".join(f"{r['a']} vs {r['b']} = {r[feat]:.1f}" for r in top))
 
@@ -479,12 +462,10 @@ def main():
     within = sorted((r for r in rows if r["pair_type"] != "cross"),
                     key=lambda r: (ORDER[r["pair_type"]], r["group_a"]))
     plot_features(rows, out / "features_by_category.png")
-    plot_lag_grid("gcc", "GCC-PHAT correlation (10 ms max-pooled)", within, args,
-                  out / "lag_gcc_phat.png", block=SR // 100)
     plot_lag_grid("mel", "Log-mel envelope correlation", within, args, out / "lag_mel_env.png")
     plot_lag_grid("flux", "Onset-flux correlation", within, args, out / "lag_onset_flux.png")
     plot_spectra(recs, out / "mean_spectra.png")
-    print(f"\nWrote pairs.csv and 5 PNG plots to {out.resolve()}")
+    print(f"\nWrote pairs.csv and 4 PNG plots to {out.resolve()}")
 
 
 if __name__ == "__main__":

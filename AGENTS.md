@@ -100,7 +100,7 @@ npm start
 
 Open `http://localhost:3000`. The demo discovers the valid A/B WAV pairs from the dataset and provides two selectors plus a Compare button.
 
-The main pipeline resamples audio to 16 kHz, converts it to mono, uses overlapping windows, and compares GCC-PHAT, log-mel energy-envelope, and onset-flux synchronization features. Scores are estimates, not proof of co-location; inspect quality notes and validation output, especially for quiet or highly stationary recordings.
+The main pipeline resamples audio to 16 kHz, converts it to mono, uses overlapping windows, and compares log-mel energy-envelope and onset-flux synchronization features. Scores are estimates, not proof of co-location; inspect quality notes and validation output, especially for quiet or highly stationary recordings.
 
 ## Implementation guidance
 
@@ -114,7 +114,7 @@ The main pipeline resamples audio to 16 kHz, converts it to mono, uses overlappi
 - Keep all audio decoding, explicit resampling, feature preparation, and inference in the browser for `web-wasm-demo`; the Node server may only serve files and return the audio manifest.
 - Keep the public browser API simple: `SameRoomAnalyzer` owns the worker and exposes `load()`, `ready()`, `compare()`, `compareBuffers()`, and `dispose()`. The worker owns the reusable `SameRoomModel` WASM wrapper.
 - The current WASM boundary accepts normalized mono 16 kHz `Float64Array` buffers. Browser input preparation must explicitly decode WAV, convert to mono, resample to 16 kHz, truncate to 20 seconds, and remove the mean before calling WASM.
-- Do not claim bit-for-bit Python equality for the current WASM implementation. It uses power-of-two FFT sizes while SciPy may choose different `next_fast_len` sizes. Labels currently match the representative parity cases and scores stay within the runner's `1e-3` tolerance, but GCC-PHAT lags and some scores can differ.
+- The WASM packet core uses power-of-two FFT sizes while SciPy may choose different `next_fast_len` sizes. The unquantized packet parity runner checks the representative mel+flux cases; quantized packets are intentionally approximate and report their score deltas separately.
 
 ## Browser/WebRTC direction
 

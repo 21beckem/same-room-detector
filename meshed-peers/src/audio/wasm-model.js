@@ -20,9 +20,8 @@ export class SameRoomModel {
     const c = model.config;
     this.exports.configure(
       model.intercept,
-      model.mean[0], model.mean[1], model.mean[2],
-      model.std[0], model.std[1], model.std[2],
-      model.coef[0], model.coef[1], model.coef[2],
+      model.mean[0], model.mean[1], model.std[0], model.std[1],
+      model.coef[0], model.coef[1],
       c.window_sec, c.hop_sec, c.max_lag, c.min_sec,
     );
   }
@@ -48,12 +47,10 @@ export class SameRoomModel {
     const minSamples = this.model.config.min_sec * 16000;
     if (n < minSamples) throw new Error(`Need at least ${this.model.config.min_sec.toFixed(0)} s of audio from each device`);
     const started = performance.now();
-    let wasmA = 0;
-    let wasmB = 0;
     try {
-      wasmA = this.exports.__pin(this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, a));
-      wasmB = this.exports.__pin(this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, b));
-      this.exports.scoreAudio(wasmA, wasmB);
+      const wasmA = this.exports.prepareDevice(this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, a), 0, 8, true);
+      const wasmB = this.exports.prepareDevice(this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, b), 0, 8, true);
+      this.exports.compareDevices(wasmA, wasmB);
       const flags = this.exports.getQualityFlags();
       const windowScores = [];
       for (let i = 0; i < this.exports.getWindowCount(); i += 1) windowScores.push(this.exports.getWindowScore(i));
@@ -62,14 +59,12 @@ export class SameRoomModel {
         label: label(this.exports.getLabel()),
         window_scores: windowScores,
         features: {
-          gcc_peak: this.exports.getFeature(0),
-          mel_peak: this.exports.getFeature(1),
-          flux_peak: this.exports.getFeature(2),
+          mel_peak: this.exports.getFeature(0),
+          flux_peak: this.exports.getFeature(1),
         },
         lags: {
-          gcc: this.exports.getLag(0),
-          mel: this.exports.getLag(1),
-          flux: this.exports.getLag(2),
+          mel: this.exports.getLag(0),
+          flux: this.exports.getLag(1),
         },
         quality: {
           ok: flags === 0,
@@ -80,10 +75,6 @@ export class SameRoomModel {
         seconds: this.exports.getSeconds(),
         wasm_ms: performance.now() - started,
       };
-    } finally {
-      if (wasmB) this.exports.__unpin(wasmB);
-      if (wasmA) this.exports.__unpin(wasmA);
-      this.exports.__collect?.();
-    }
+    } finally { this.exports.__collect?.(); }
   }
 }

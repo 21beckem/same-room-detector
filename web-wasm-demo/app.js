@@ -44,8 +44,8 @@ function renderResult(result) {
     ["Truth", `${result.truth} → expected ${result.expected >= 0.75 ? "close" : result.expected >= 0.25 ? "middle" : "unrelated"}`],
     ["Held-out score", result.held_out_score === null ? "n/a" : format(result.held_out_score)],
     ["Windows", result.window_scores.map((value) => format(value, 2)).join("  ")],
-    ["Features", `GCC ${format(result.features.gcc_peak)}   mel ${format(result.features.mel_peak, 2)}   flux ${format(result.features.flux_peak, 2)}`],
-    ["Peak lags", `GCC ${result.lags.gcc >= 0 ? "+" : ""}${format(result.lags.gcc, 2)} s   mel ${result.lags.mel >= 0 ? "+" : ""}${format(result.lags.mel, 2)} s   flux ${result.lags.flux >= 0 ? "+" : ""}${format(result.lags.flux, 2)} s`],
+    ["Features", `mel ${format(result.features.mel_peak, 2)}   flux ${format(result.features.flux_peak, 2)}`],
+    ["Peak lags", `mel ${result.lags.mel >= 0 ? "+" : ""}${format(result.lags.mel, 2)} s   flux ${result.lags.flux >= 0 ? "+" : ""}${format(result.lags.flux, 2)} s`],
     ["Audio", `${format(result.seconds, 1)} s`],
     ["Timing", `WASM ${format(result.wasm_ms, 1)} ms   total ${format(result.total_ms, 1)} ms`],
   ];

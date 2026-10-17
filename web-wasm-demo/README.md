@@ -20,4 +20,9 @@ Then open <http://localhost:3000>.
 The public browser API is `SameRoomAnalyzer`. It owns the worker and exposes
 `load()`, `ready()`, `compare(recordingA, recordingB)`,
 `compareBuffers(audioA, audioB, metadataA, metadataB)`, and `dispose()`.
-The worker contains the reusable `SameRoomModel` WASM wrapper.
+The worker contains the reusable `SameRoomModel` WASM wrapper. The wrapper
+uses the packetized WASM boundary: each input is converted once into an
+8-bit mel packet by default, and the pair scorer receives only the two packet
+handles. Use `prepareDevice(..., { quantize: false })` for numerical tests or
+`loadDevicePacket()` to score a serialized packet received from another
+device.
