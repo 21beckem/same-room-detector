@@ -2,7 +2,8 @@
   "private": true,
   "scripts": {
     "build:wasm": "asc wasm/same_room.ts --use abort= --exportRuntime --exportTable --runtime minimal --optimize --outFile wasm/same_room.wasm --sourceMap",
-    "test:wasm": "node wasm_parity_runner.js"
+    "test:wasm": "node wasm_parity_runner.js",
+    "test:wasm-memory": "node wasm_memory_test.js"
   },
   "devDependencies": {
     "@assemblyscript/loader": "^0.27.31",

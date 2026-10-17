@@ -37,7 +37,12 @@ class DevicePacket {
   }
 }
 
+// Packet handles are deliberately explicit resources.  The AssemblyScript GC
+// cannot reclaim a packet while this table still points at it, so callers must
+// release handles they no longer need.  Reusing released slots keeps long-lived
+// workers from growing the handle table forever.
 let packets = new Array<DevicePacket>();
+let freePacketHandles = new Array<i32>();
 let filterbank = makeFilterbank();
 
 function makeFilterbank(): Array<Float64Array> {
@@ -138,7 +143,15 @@ function windowFeatures(a: DevicePacket, b: DevicePacket, a0: i32, b0: i32, t: i
 function expit(z: f64): f64 { return 1.0 / (1.0 + Math.exp(-z)); }
 function median(values: Float64Array): f64 { let sorted = values.slice(0); sorted.sort(); let mid = sorted.length / 2; return sorted.length % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2.0; }
 function packetFrameIndex(packet: DevicePacket, sample: i32): i32 { return <i32>Math.max(0, Math.min(packet.frameCount, (sample - packet.firstFrameSample) / HOP)); }
-function addPacket(packet: DevicePacket): i32 { packets.push(packet); return packets.length - 1; }
+function addPacket(packet: DevicePacket): i32 {
+  if (freePacketHandles.length > 0) {
+    let handle = freePacketHandles.pop();
+    packets[handle] = packet;
+    return handle;
+  }
+  packets.push(packet);
+  return packets.length - 1;
+}
 
 export const FLOAT64ARRAY_ID: usize = idof<Float64Array>();
 export const UINT8ARRAY_ID: usize = idof<Uint8Array>();
@@ -150,6 +163,17 @@ export function prepareDevice(audio: Float64Array, globalStartSample: i32, bitDe
   return addPacket(makePacket(globalStartSample, audio, first, frameCount, mel, bitDepth, quantize));
 }
 export function loadDevicePacket(bytes: Uint8Array): i32 { return addPacket(parsePacket(bytes)); }
+
+// Release a packet handle and its mel/flux/serialized arrays.  The actual
+// storage is reclaimed by AssemblyScript's GC after the handle is cleared;
+// keeping the slot in the table lets it be reused without changing handles
+// held by other packets.
+export function releaseDevice(handle: i32): void {
+  if (handle < 0 || handle >= packets.length) return;
+  if (changetype<usize>(packets[handle]) == 0) return;
+  packets[handle] = changetype<DevicePacket>(0);
+  freePacketHandles.push(handle);
+}
 
 export function mergeDevices(firstHandle: i32, secondHandle: i32): i32 {
   let a = packets[firstHandle], b = packets[secondHandle]; if (a.frameCount == 0) return secondHandle; if (b.frameCount == 0) return firstHandle;

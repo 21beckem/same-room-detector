@@ -29,15 +29,31 @@ export class SameRoomModel {
   prepareDevice(audio, { globalStartSample = 0, bitDepth = 8, quantize = true } = {}) {
     const values = audio instanceof Float64Array ? audio : Float64Array.from(audio);
     const input = this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, values);
-    const handle = this.exports.prepareDevice(input, globalStartSample, bitDepth, quantize);
+    let handle;
+    try {
+      handle = this.exports.prepareDevice(input, globalStartSample, bitDepth, quantize);
+    } finally {
+      this.exports.__collect?.();
+    }
     return { handle, bytes: this.packetBytes(handle), byteLength: this.exports.getPacketByteLength(handle), frameCount: this.exports.getPacketFrameCount(handle), quantized: this.exports.getPacketQuantized(handle), bitDepth: this.exports.getPacketBitDepth(handle) };
   }
 
   loadDevicePacket(bytes) {
     const values = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes);
     const input = this.exports.__newArray(this.exports.UINT8ARRAY_ID, values);
-    const handle = this.exports.loadDevicePacket(input);
+    let handle;
+    try {
+      handle = this.exports.loadDevicePacket(input);
+    } finally {
+      this.exports.__collect?.();
+    }
     return { handle, bytes: values, byteLength: values.length, frameCount: this.exports.getPacketFrameCount(handle), quantized: this.exports.getPacketQuantized(handle), bitDepth: this.exports.getPacketBitDepth(handle) };
+  }
+
+  releaseDevice(packet) {
+    if (packet?.handle !== undefined) this.exports.releaseDevice(packet.handle);
+    else if (Number.isInteger(packet)) this.exports.releaseDevice(packet);
+    this.exports.__collect?.();
   }
 
   packetBytes(handle) {
@@ -60,14 +76,22 @@ export class SameRoomModel {
   }
 
   comparePackets(packetA, packetB) {
-    const a = packetA?.handle ?? this.loadDevicePacket(packetA).handle;
-    const b = packetB?.handle ?? this.loadDevicePacket(packetB).handle;
-    const started = performance.now();
-    this.exports.compareDevices(a, b);
-    const pairMs = performance.now() - started;
-    const result = this.result(pairMs);
-    result.pair_ms = pairMs;
-    return result;
+    const loadedA = packetA?.handle === undefined ? this.loadDevicePacket(packetA) : null;
+    const loadedB = packetB?.handle === undefined ? this.loadDevicePacket(packetB) : null;
+    const a = loadedA?.handle ?? packetA.handle;
+    const b = loadedB?.handle ?? packetB.handle;
+    try {
+      const started = performance.now();
+      this.exports.compareDevices(a, b);
+      const pairMs = performance.now() - started;
+      const result = this.result(pairMs);
+      result.pair_ms = pairMs;
+      return result;
+    } finally {
+      if (loadedA) this.releaseDevice(loadedA);
+      if (loadedB) this.releaseDevice(loadedB);
+      this.exports.__collect?.();
+    }
   }
 
   scoreBuffers(audioA, audioB, options = {}) {
@@ -77,9 +101,14 @@ export class SameRoomModel {
     if (n < minSamples) throw new Error(`Need at least ${this.model.config.min_sec.toFixed(0)} s of audio from each device (got ${(n / 16000).toFixed(1)} s).`);
     const started = performance.now();
     const packetA = this.prepareDevice(a, options), packetB = this.prepareDevice(b, options);
-    const result = this.comparePackets(packetA, packetB);
-    result.wasm_ms = performance.now() - started;
-    result.device_ms = result.wasm_ms - result.pair_ms;
-    return result;
+    try {
+      const result = this.comparePackets(packetA, packetB);
+      result.wasm_ms = performance.now() - started;
+      result.device_ms = result.wasm_ms - result.pair_ms;
+      return result;
+    } finally {
+      this.releaseDevice(packetA);
+      this.releaseDevice(packetB);
+    }
   }
 }

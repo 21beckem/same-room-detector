@@ -47,9 +47,11 @@ export class SameRoomModel {
     const minSamples = this.model.config.min_sec * 16000;
     if (n < minSamples) throw new Error(`Need at least ${this.model.config.min_sec.toFixed(0)} s of audio from each device`);
     const started = performance.now();
+    let wasmA;
+    let wasmB;
     try {
-      const wasmA = this.exports.prepareDevice(this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, a), 0, 8, true);
-      const wasmB = this.exports.prepareDevice(this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, b), 0, 8, true);
+      wasmA = this.exports.prepareDevice(this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, a), 0, 8, true);
+      wasmB = this.exports.prepareDevice(this.exports.__newArray(this.exports.FLOAT64ARRAY_ID, b), 0, 8, true);
       this.exports.compareDevices(wasmA, wasmB);
       const flags = this.exports.getQualityFlags();
       const windowScores = [];
@@ -75,6 +77,10 @@ export class SameRoomModel {
         seconds: this.exports.getSeconds(),
         wasm_ms: performance.now() - started,
       };
-    } finally { this.exports.__collect?.(); }
+    } finally {
+      if (wasmA !== undefined) this.exports.releaseDevice(wasmA);
+      if (wasmB !== undefined) this.exports.releaseDevice(wasmB);
+      this.exports.__collect?.();
+    }
   }
 }

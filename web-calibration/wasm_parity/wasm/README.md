@@ -8,7 +8,7 @@ npm run build:wasm
 npm run test:wasm
 ```
 
-The core has two stages. `prepareDevice(audio, globalStartSample, bitDepth, quantize)` extracts mel frames on the global 320-sample grid and returns a packet handle. `getPacketByte*` exposes the serialized packet for transport, and `loadDevicePacket` accepts it on the receiving side. `mergeDevices` combines overlapping chunk packets without re-reading raw audio. `compareDevices(packetA, packetB)` consumes only packet handles and returns the score.
+The core has two stages. `prepareDevice(audio, globalStartSample, bitDepth, quantize)` extracts mel frames on the global 320-sample grid and returns a packet handle. `getPacketByte*` exposes the serialized packet for transport, and `loadDevicePacket` accepts it on the receiving side. `mergeDevices` combines overlapping chunk packets without re-reading raw audio. `compareDevices(packetA, packetB)` consumes only packet handles and returns the score. Call `releaseDevice(handle)` when a packet is no longer needed; released slots are reused and the AssemblyScript GC can reclaim the packet arrays.
 
 Packets contain 40-band log-mel frames, per-band quantization metadata, the audio span, and RMS/activity values. At 8-bit quantization, the representative 15.8-second recording in the included set uses about 32 KiB instead of about 253 KiB for the unquantized float64 packet, and raw waveform input is not part of the packet.
 
