@@ -314,7 +314,7 @@ async function requestScore() {
   }
 }
 
-setInterval(() => requestScore(), PACKET_INTERVAL_MS * 2.5);
+setInterval(() => requestScore(), 500);
 
 function renderResult(result) {
   lastResult = result;
