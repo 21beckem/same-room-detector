@@ -60,12 +60,12 @@ The default packet format is 8-bit quantized mel data. Override it with
 const unquantized = await compare.prepare(samples, { quantize: false });
 ```
 
-## Microphone streaming
+## Microphone capture and on-demand preparation
 
 Call `pipeMicAudio()` from a user interaction, because the browser will ask
 for microphone permission. It requests mono, raw-style 16 kHz input, prepares
-rolling model-sized packets in the background, and keeps only the most recent
-30 seconds by default:
+captures raw samples locally, and can prepare rolling model-sized packets in
+the background:
 
 ```js
 await compare.pipeMicAudio({
@@ -79,6 +79,25 @@ const result = await compare.compareToSelf(packetFromAnotherDevice);
 
 await compare.stopMicAudio(); // optional; dispose() also stops it
 ```
+
+For request-driven applications, set `prepareOnPacket: false`. Capture still
+continues locally, but no worker/WASM packet preparation occurs until the
+caller asks for one. Call `prepareMicPacket()` when a comparison is requested:
+
+```js
+await compare.pipeMicAudio({
+  historySeconds: 30,
+  prepareOnPacket: false,
+});
+const localPacket = await compare.prepareMicPacket();
+```
+
+`prepareMicPacket()` prepares exactly one packet from the newest complete
+microphone window and returns the same timestamped packet shape as `prepare()`.
+The optional `onPacket` callback is called for explicitly prepared packets too.
+If the browser has suspended or stalled the audio context, it clears the old
+window and reports that a fresh model-sized window must be collected instead of
+silently scoring stale microphone data.
 
 `getLocalPacket(timestamp)` returns a copy of the prepared packet whose
 timestamp is closest to the requested time, or `null` until the first packet
@@ -94,3 +113,9 @@ microphone, releases the worker, and clears all pending work.
 `AudioComparison` exposes `score`, `label`, `windowScores`, `features`,
 `lags`, `quality`, `seconds`, `pairMs`, `deviceMs`, and `totalMs`. Snake-case
 aliases are also provided for compatibility with the original demos.
+
+For browser diagnostics, `compare.drawPacket(canvas, summary, packet)` draws
+the packet's compact mel payload as a heatmap and writes packet metadata into
+the supplied summary element. It only reads the packet bytes already returned
+by `prepare()` or `getLocalPacket()`; it does not expose or reconstruct raw
+audio.

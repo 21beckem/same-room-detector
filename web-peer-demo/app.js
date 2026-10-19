@@ -1,48 +1,17 @@
-import { prepareSamples } from "./audio.js";
-import { RawStreamCapture, RollingAudioBuffer } from "./live-audio.js";
-import { alignLiveBuffers, estimateLiveOffset } from "./live-sync.js";
 import { AudioCompare } from "../exports/compare/compare.js";
 
-// Change this value to control how often a fresh live comparison is requested.
-const COMPARISON_INTERVAL_MS = 1000;
-// User-tunable: set to 0 or any larger value to change the allowed live offset.
-const MAX_ALIGNMENT_SECONDS = 3;
-const CAPTURE_MARGIN_SECONDS = 1;
-const REMOTE_HEALTH_INTERVAL_MS = 1500;
-const REMOTE_MEDIA_GRACE_MS = 5000;
-const RAW_AUDIO_CONSTRAINTS = {
-  channelCount: { ideal: 1 },
-  sampleRate: { ideal: 96000 },
-  sampleSize: { ideal: 16 },
-  latency: { ideal: 0 },
-  voiceIsolation: false,
-  echoCancellation: { exact: false },
-  noiseSuppression: { exact: false },
-  autoGainControl: { exact: false },
-  advanced: [{
-    googEchoCancellation: false,
-    googEchoCancellation2: false,
-    googAutoGainControl: false,
-    googAutoGainControl2: false,
-    googNoiseSuppression: false,
-    googNoiseSuppression2: false,
-    googHighpassFilter: false,
-    googTypingNoiseDetection: false,
-  }],
-};
-const FALLBACK_AUDIO_CONSTRAINTS = {
-  ...RAW_AUDIO_CONSTRAINTS,
-  echoCancellation: false,
-  noiseSuppression: false,
-  autoGainControl: false,
-};
+// The library prepares packets continuously so a button press can use the
+// newest complete local window. Nothing is sent until Request Score is used.
+const PACKET_INTERVAL_MS = 1000;
+const PACKET_HISTORY_SECONDS = 30;
+const MAX_PACKET_MATCH_DISTANCE_MS = 2500;
+const SCORE_REQUEST_TIMEOUT_MS = 10000;
 
 const createButton = document.querySelector("#create-session");
 const joinButton = document.querySelector("#join-session");
 const joinCodeInput = document.querySelector("#join-code");
 const peerStatus = document.querySelector("#peer-status");
 const captureStatus = document.querySelector("#capture-status");
-const remoteAudio = document.querySelector("#remote-audio");
 const setupPanel = document.querySelector(".setup");
 const livePanel = document.querySelector(".live-panel");
 const diagnosticsPanel = document.querySelector(".diagnostics-panel");
@@ -59,74 +28,63 @@ const detailsOutput = document.querySelector("#result-details");
 const debugOutput = document.querySelector("#debug-output");
 const localBufferLabel = document.querySelector("#local-buffer-label");
 const remoteBufferLabel = document.querySelector("#remote-buffer-label");
-const localBufferProgress = document.querySelector("#local-buffer-progress");
-const remoteBufferProgress = document.querySelector("#remote-buffer-progress");
-const localWaveform = document.querySelector("#local-waveform");
-const remoteWaveform = document.querySelector("#remote-waveform");
-const localWaveformLevel = document.querySelector("#local-waveform-level");
-const remoteWaveformLevel = document.querySelector("#remote-waveform-level");
-const localConnectedWaveform = document.querySelector("#local-connected-waveform");
-const remoteConnectedWaveform = document.querySelector("#remote-connected-waveform");
-const localConnectedLevel = document.querySelector("#local-connected-level");
-const remoteConnectedLevel = document.querySelector("#remote-connected-level");
 const localConnectedScore = document.querySelector("#local-connected-score");
 const remoteConnectedScore = document.querySelector("#remote-connected-score");
 const localConnectedMeta = document.querySelector("#local-connected-meta");
 const remoteConnectedMeta = document.querySelector("#remote-connected-meta");
+const localPacketSummary = document.querySelector("#local-packet-summary");
+const remotePacketSummary = document.querySelector("#remote-packet-summary");
+const localPacketCanvas = document.querySelector("#local-packet-visualization");
+const remotePacketCanvas = document.querySelector("#remote-packet-visualization");
 const localScoreAge = document.querySelector("#local-score-age");
 const remoteScoreAge = document.querySelector("#remote-score-age");
 const remoteTransportStatus = document.querySelector("#remote-transport-status");
 const scoreSummaryMax = document.querySelector("#score-summary-max");
 const scoreSummaryAverage = document.querySelector("#score-summary-average");
 const scoreSummaryMin = document.querySelector("#score-summary-min");
+const requestScoreButton = document.querySelector("#request-score");
 
 let analyzer;
 let peer;
-let activeCall;
 let dataConnection;
-let localStream;
-let audioContext;
-let localCapture;
-let remoteCapture;
-let comparisonTimer;
 let comparisonInFlight = false;
 let inviteUrl = "";
 let sessionRole = "none";
 let analyzerReady = false;
 let modelConfig = null;
 let analysisSeconds = 0;
-let minComparisonSeconds = 0;
-let liveBufferSeconds = 0;
 let comparisonAttempts = 0;
 let completedComparisons = 0;
+let localPacketCount = 0;
+let remotePacketCount = 0;
+let lastPacketMatchDeltaMs = null;
+let lastLocalPacket = null;
 let lastComparisonAttemptAt = null;
 let lastResultAt = null;
 let lastResult = null;
 let remoteResult = null;
 let lastComparisonError = null;
-let waveformAnimationFrame;
-let remoteHealthTimer;
-let remoteStreamReceivedAt = null;
-let remoteHealth = { state: "waiting", detail: "Waiting for a remote audio stream." };
-
-let localBuffer = null;
-let remoteBuffer = null;
-const WAVEFORM_SECONDS = 3;
+let pendingScoreRequest = null;
+let scoreRequestTimer = null;
+let remoteRequestInFlight = false;
+let clockSynchronized = false;
+let remoteHealth = { state: "waiting", detail: "Waiting for a score request." };
 
 function setPeerStatus(message, kind = "") {
   peerStatus.textContent = message;
   peerStatus.className = `status ${kind}`;
   updateDebug();
 }
+
 const keepAwake = new NoSleep();
 const refreshConfirm = (() => {
   function handleBeforeUnload(event) {
     event.preventDefault();
-    event.returnValue = '';
+    event.returnValue = "";
   }
   return {
-    enable: () => window.addEventListener('beforeunload', handleBeforeUnload),
-    disable: () => window.removeEventListener('beforeunload', handleBeforeUnload),
+    enable: () => window.addEventListener("beforeunload", handleBeforeUnload),
+    disable: () => window.removeEventListener("beforeunload", handleBeforeUnload),
   };
 })();
 
@@ -140,20 +98,22 @@ function format(value, digits = 2) {
   return Number(value).toFixed(digits);
 }
 
-function levelDbfs(rms) {
-  return rms > 0 ? `${format(20 * Math.log10(rms), 1)} dBFS` : "-∞ dBFS";
+function formatTime(timestamp) {
+  return timestamp ? new Date(timestamp).toLocaleTimeString() : "never";
 }
 
 function resultAge(timestamp) {
   return timestamp ? `updated ${format(Math.max(0, (Date.now() - timestamp) / 1000), 0)}s ago` : "Waiting for score";
 }
 
+function resultQuality(result) {
+  if (!result) return "quality n/a";
+  return result.quality?.ok ? "quality ok" : (result.quality?.notes || []).join("; ") || "quality warning";
+}
+
 function resultMeta(result) {
   if (!result) return "Waiting for score";
-  const alignment = result.alignment
-    ? `offset ${format(result.alignment.offset_seconds)}s · correlation ${format(result.alignment.correlation, 2)}`
-    : "alignment n/a";
-  return `${result.label} · ${alignment}`;
+  return `${result.label} · ${resultQuality(result)}`;
 }
 
 function scoreClassForValue(value) {
@@ -164,7 +124,7 @@ function scoreClassForValue(value) {
 function renderConnectedScores() {
   const localScoreClass = lastResult?.label === "close" ? "good" : lastResult?.label === "middle" ? "warn" : "bad";
   localConnectedScore.className = `split-score ${lastResult ? localScoreClass : ""}`;
-  localConnectedScore.textContent = lastResult ? `${format(lastResult.score * 100, 1)}%` : "Waiting for local audio…";
+  localConnectedScore.textContent = lastResult ? `${format(lastResult.score * 100, 1)}%` : "Waiting for local score…";
   localConnectedMeta.textContent = lastResult ? resultMeta(lastResult) : "Your device’s score will appear here.";
   localScoreAge.textContent = resultAge(lastResultAt);
 
@@ -187,12 +147,9 @@ function renderConnectedScores() {
 function setRemoteHealth(state, detail) {
   const changed = remoteHealth.state !== state || remoteHealth.detail !== detail;
   remoteHealth = { state, detail };
-  if (remoteTransportStatus) {
-    remoteTransportStatus.className = `transport-status ${state === "ready" ? "good" : state === "waiting" ? "" : state === "silent" ? "warn" : "error"}`;
-    remoteTransportStatus.textContent = detail;
-  }
+  remoteTransportStatus.className = `transport-status ${state === "ready" ? "good" : state === "waiting" ? "" : "error"}`;
+  remoteTransportStatus.textContent = detail;
   if (changed && state !== "ready") {
-    // A previous score was based on remote samples that are no longer valid.
     lastResult = null;
     lastResultAt = null;
     resultPanel.hidden = true;
@@ -215,165 +172,44 @@ function setConnectedView(connected) {
     keepAwake.disable();
     refreshConfirm.disable();
   }
+  updateRequestButton();
   renderConnectedScores();
 }
 
-function drawWaveform(canvas, levelOutput, buffer, color) {
-  const rect = canvas.getBoundingClientRect();
-  const cssWidth = Math.max(1, Math.floor(rect.width));
-  const cssHeight = Math.max(80, Math.floor(rect.height || 120));
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-  const pixelWidth = Math.max(1, Math.floor(cssWidth * pixelRatio));
-  const pixelHeight = Math.max(1, Math.floor(cssHeight * pixelRatio));
-  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-    canvas.width = pixelWidth;
-    canvas.height = pixelHeight;
-  }
-
-  const context = canvas.getContext("2d");
-  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-  context.clearRect(0, 0, cssWidth, cssHeight);
-  context.fillStyle = "#f8fafb";
-  context.fillRect(0, 0, cssWidth, cssHeight);
-  context.strokeStyle = "#d9dfe3";
-  context.lineWidth = 1;
-  context.beginPath();
-  context.moveTo(0, cssHeight / 2 + 0.5);
-  context.lineTo(cssWidth, cssHeight / 2 + 0.5);
-  context.stroke();
-
-  const samples = buffer ? buffer.snapshot(WAVEFORM_SECONDS) : new Float32Array(0);
-  if (!samples.length) {
-    levelOutput.textContent = "waiting for audio";
-    context.fillStyle = "#7a858d";
-    context.font = "13px system-ui, sans-serif";
-    context.fillText("Waiting for samples…", 12, 22);
-    return;
-  }
-
-  const bucketCount = Math.max(1, Math.floor(cssWidth));
-  const bucketSize = samples.length / bucketCount;
-  let peak = 0;
-  let energy = 0;
-  const minima = new Float64Array(bucketCount);
-  const maxima = new Float64Array(bucketCount);
-  for (let bucket = 0; bucket < bucketCount; bucket += 1) {
-    const start = Math.floor(bucket * bucketSize);
-    const end = Math.max(start + 1, Math.min(samples.length, Math.floor((bucket + 1) * bucketSize)));
-    let minimum = 1;
-    let maximum = -1;
-    for (let i = start; i < end; i += 1) {
-      const value = samples[i];
-      minimum = Math.min(minimum, value);
-      maximum = Math.max(maximum, value);
-      peak = Math.max(peak, Math.abs(value));
-      energy += value * value;
-    }
-    minima[bucket] = minimum;
-    maxima[bucket] = maximum;
-  }
-  const scale = Math.min(2000, (cssHeight / 2 - 5) / Math.max(peak, 0.002));
-  context.strokeStyle = color;
-  context.lineWidth = 1;
-  context.beginPath();
-  for (let bucket = 0; bucket < bucketCount; bucket += 1) {
-    const x = bucket + 0.5;
-    context.moveTo(x, cssHeight / 2 - maxima[bucket] * scale);
-    context.lineTo(x, cssHeight / 2 - minima[bucket] * scale);
-  }
-  context.stroke();
-  const rms = Math.sqrt(energy / samples.length);
-  levelOutput.textContent = `peak ${format(peak, 4)} · RMS ${levelDbfs(rms)}`;
-}
-
-function drawWaveforms() {
-  drawWaveform(localWaveform, localWaveformLevel, localBuffer, "#2878c8");
-  drawWaveform(remoteWaveform, remoteWaveformLevel, remoteBuffer, "#b45b25");
-  drawWaveform(localConnectedWaveform, localConnectedLevel, localBuffer, "#2878c8");
-  drawWaveform(remoteConnectedWaveform, remoteConnectedLevel, remoteBuffer, "#b45b25");
-  waveformAnimationFrame = window.requestAnimationFrame(drawWaveforms);
-}
-
-function formatTime(timestamp) {
-  return timestamp ? new Date(timestamp).toLocaleTimeString() : "never";
-}
-
-function setting(value) {
-  return value === undefined ? "?" : value ? "on" : "off";
-}
-
-function trackSummary(stream) {
-  const track = stream?.getAudioTracks?.()[0];
-  if (!track) return "none";
-  const settings = track.getSettings?.() || {};
-  return [
-    `state=${track.readyState}`,
-    `enabled=${track.enabled}`,
-    `muted=${track.muted}`,
-    `rate=${settings.sampleRate ?? "?"}`,
-    `channels=${settings.channelCount ?? "?"}`,
-    `echo=${setting(settings.echoCancellation)}`,
-    `noise=${setting(settings.noiseSuppression)}`,
-    `gain=${setting(settings.autoGainControl)}`,
-  ].join(" ");
-}
-
-function connectionSummary() {
-  if (!activeCall) return "none";
-  const connection = activeCall.peerConnection;
-  if (!connection) return `media call peer=${activeCall.peer || "?"}`;
-  return [
-    `connection=${connection.connectionState || "?"}`,
-    `ice=${connection.iceConnectionState || "?"}`,
-    `signaling=${connection.signalingState || "?"}`,
-  ].join(" ");
+function updateRequestButton() {
+  if (!requestScoreButton) return;
+  const waiting = pendingScoreRequest || comparisonInFlight;
+  requestScoreButton.disabled = !dataConnection?.open || !clockSynchronized || Boolean(waiting);
+  requestScoreButton.textContent = waiting ? "Waiting for Score…" : "Request Score";
 }
 
 function updateDebug() {
-  if (!debugOutput) return;
-  const localSeconds = localBuffer?.seconds || 0;
-  const remoteSeconds = remoteBuffer?.seconds || 0;
   const targetText = analysisSeconds ? `${analysisSeconds.toFixed(1)} s` : "loading model";
-  localBufferLabel.textContent = `${format(localSeconds, 1)} / ${targetText}`;
-  remoteBufferLabel.textContent = `${format(remoteSeconds, 1)} / ${targetText}`;
-  if (analysisSeconds) {
-    localBufferProgress.max = analysisSeconds;
-    remoteBufferProgress.max = analysisSeconds;
-    localBufferProgress.value = Math.min(localSeconds, analysisSeconds);
-    remoteBufferProgress.value = Math.min(remoteSeconds, analysisSeconds);
-  } else {
-    localBufferProgress.max = 1;
-    remoteBufferProgress.max = 1;
-    localBufferProgress.value = 0;
-    remoteBufferProgress.value = 0;
-  }
+  localBufferLabel.textContent = `${localPacketCount} packets · ${targetText} each`;
+  remoteBufferLabel.textContent = `${remotePacketCount} packets received on request`;
 
   const lastResultText = lastResult
     ? `${format(lastResult.score * 100, 1)}% ${lastResult.label} at ${formatTime(lastResultAt)}`
     : "none";
   const resultDetails = lastResult
     ? [
-      `window scores=[${lastResult.window_scores.map((value) => format(value, 3)).join(", ")}]`,
-      `features mel=${format(lastResult.mel_peak, 4)} flux=${format(lastResult.flux_peak, 4)}`,
-      `lags mel=${format(lastResult.lags.mel, 3)}s flux=${format(lastResult.lags.flux, 3)}s`,
-      lastResult.alignment
-        ? `alignment offset=${format(lastResult.alignment.offset_seconds, 3)}s correlation=${format(lastResult.alignment.correlation, 3)} margin=${format(lastResult.alignment.margin, 3)} ${lastResult.alignment.usable ? "used" : "not used"}`
-        : "alignment not used",
-      `quality=${lastResult.quality.ok ? "ok" : lastResult.quality.notes.join("; ")}`,
+      `window scores=[${(lastResult.windowScores || []).map((value) => format(value, 3)).join(", ")}]`,
+      `features mel=${format(lastResult.features?.mel_peak, 4)} flux=${format(lastResult.features?.flux_peak, 4)}`,
+      `lags mel=${format(lastResult.lags?.mel, 3)}s flux=${format(lastResult.lags?.flux, 3)}s`,
+      `quality=${resultQuality(lastResult)}`,
     ].join("\n  ")
     : "none";
 
   debugOutput.textContent = [
     `status: peer=${peerStatus.textContent} | capture=${captureStatus.textContent}`,
     `analyzer: ${analyzerReady ? "ready" : "not ready"} | role=${sessionRole} | busy=${comparisonInFlight}`,
-    `peer: id=${peer?.id || "none"} | connection=${connectionSummary()}`,
+    `peer: id=${peer?.id || "none"} | data=${dataConnection?.open ? "open" : "closed"}`,
     `model: ${modelConfig ? `window=${modelConfig.window_sec}s min=${modelConfig.min_sec}s hop=${modelConfig.hop_sec}s maxLag=${modelConfig.max_lag}s` : "loading"}`,
-    `local buffer: ${format(localSeconds, 3)}s ${localBuffer?.totalSamples || 0} samples ${localBuffer?.sampleRate || "?"}Hz ${localBuffer?.chunkCount || 0} chunks`,
-    `remote buffer: ${format(remoteSeconds, 3)}s ${remoteBuffer?.totalSamples || 0} samples ${remoteBuffer?.sampleRate || "?"}Hz ${remoteBuffer?.chunkCount || 0} chunks`,
-    `remote media: ${remoteHealth.state} | ${remoteHealth.detail}`,
-    `local track: ${trackSummary(localStream)}`,
-    `remote track: ${trackSummary(remoteCapture?.stream)}`,
-    `comparisons: attempts=${comparisonAttempts} completed=${completedComparisons} interval=${COMPARISON_INTERVAL_MS}ms last attempt=${formatTime(lastComparisonAttemptAt)}`,
+    `packets: local=${localPacketCount} remote=${remotePacketCount} exchanged on request`,
+    `packet match: ${lastPacketMatchDeltaMs === null ? "none" : `${format(lastPacketMatchDeltaMs, 0)} ms local-minus-remote`} (limit ${MAX_PACKET_MATCH_DISTANCE_MS} ms)`,
+    `clock: ${clockSynchronized ? "synchronized" : "not synchronized"} | request=${pendingScoreRequest?.id || "none"}`,
+    `remote status: ${remoteHealth.state} | ${remoteHealth.detail}`,
+    `comparisons: attempts=${comparisonAttempts} completed=${completedComparisons} interval=${PACKET_INTERVAL_MS}ms last attempt=${formatTime(lastComparisonAttemptAt)}`,
     `last result: ${lastResultText}`,
     `last error: ${lastComparisonError || "none"}`,
     `result details:\n  ${resultDetails}`,
@@ -401,180 +237,84 @@ async function copyInvite() {
   }
 }
 
-async function ensureLocalStream() {
-  if (localStream) return localStream;
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone capture requires HTTPS or localhost");
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: RAW_AUDIO_CONSTRAINTS, video: false });
-  } catch (error) {
-    if (error.name !== "OverconstrainedError") throw error;
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: FALLBACK_AUDIO_CONSTRAINTS, video: false });
-  }
-  const track = localStream.getAudioTracks()[0];
-  const settings = track?.getSettings?.() || {};
-  const processing = [
-    ["echo", settings.echoCancellation],
-    ["noise", settings.noiseSuppression],
-    ["gain", settings.autoGainControl],
-  ].filter(([, value]) => value !== undefined).map(([name, value]) => `${name}=${value ? "on" : "off"}`).join(", ");
-  setCaptureStatus(`Microphone ready${processing ? ` (${processing})` : ""}. Waiting for the other peer.`);
-  return localStream;
-}
-
-async function createAudioContext(sampleRate) {
-  let context;
-  try {
-    const options = { latencyHint: "interactive" };
-    if (sampleRate) options.sampleRate = sampleRate;
-    context = new AudioContext(options);
-  } catch {
-    context = new AudioContext({ latencyHint: "interactive" });
-  }
-  await context.audioWorklet.addModule(new URL("./capture-worklet.js", import.meta.url));
-  if (context.state === "suspended") await context.resume();
-  return context;
-}
-
-async function ensureAudioContext(sampleRate) {
-  if (!audioContext) {
-    audioContext = await createAudioContext(sampleRate);
-  } else if (!localCapture && sampleRate && audioContext.sampleRate !== sampleRate) {
-    const replacement = await createAudioContext(sampleRate);
-    const previous = audioContext;
-    audioContext = replacement;
-    await previous.close();
-  }
-  if (audioContext.state === "suspended") await audioContext.resume();
-  return audioContext;
+function handleLocalPacket(packet) {
+  lastLocalPacket = packet;
+  localPacketCount += 1;
+  analyzer.drawPacket(localPacketCanvas, localPacketSummary, packet);
+  setCaptureStatus(
+    dataConnection?.open
+      ? "Microphone ready. Press Request Score when you want to compare."
+      : "Microphone ready. Waiting for the peer connection…",
+    "good",
+  );
+  updateDebug();
 }
 
 async function startLocalCapture() {
-  await ensureLocalStream();
-  const trackRate = localStream.getAudioTracks()[0]?.getSettings?.().sampleRate;
-  const context = await ensureAudioContext(trackRate);
-  if (!localCapture) {
-    localCapture = new RawStreamCapture(context, localStream, (samples, sampleRate) => {
-      localBuffer.append(samples, sampleRate);
-    });
-  }
+  await analyzer.pipeMicAudio({
+    historySeconds: PACKET_HISTORY_SECONDS,
+    packetIntervalMs: PACKET_INTERVAL_MS,
+    prepareOnPacket: true,
+    onPacket: handleLocalPacket,
+    onError: (error) => {
+      lastComparisonError = error.message;
+      setCaptureStatus(`Microphone preparation failed: ${error.message}`, "error");
+    },
+  });
+  setCaptureStatus("Microphone ready. Waiting for the peer connection…", "good");
   updateDebug();
 }
 
-async function startRemoteCapture(stream) {
-  const context = await ensureAudioContext();
-  if (remoteCapture) remoteCapture.dispose();
-  const remoteTracks = stream.getAudioTracks();
-  if (!remoteTracks.length) throw new Error("Peer connected, but the remote stream contains no audio track");
-  for (const track of remoteTracks) track.enabled = true;
-  const refreshHealth = () => checkRemoteHealth().catch((error) => setRemoteHealth("unavailable", `Could not inspect remote media transport: ${error.message}`));
-  for (const track of remoteTracks) {
-    track.addEventListener("mute", refreshHealth);
-    track.addEventListener("unmute", refreshHealth);
-    track.addEventListener("ended", refreshHealth);
+function packetForTransport(packet) {
+  return { timestamp: packet.timestamp, buffer: packet.buffer.slice(0) };
+}
+
+function clearScoreRequest() {
+  if (scoreRequestTimer) window.clearTimeout(scoreRequestTimer);
+  scoreRequestTimer = null;
+  pendingScoreRequest = null;
+  updateRequestButton();
+}
+
+function validatePacketMatch(localPacket, remotePacket) {
+  if (!localPacket) throw new Error("No prepared local microphone packet is available yet.");
+  if (!Number.isFinite(remotePacket?.timestamp)) throw new Error("The other device returned an invalid packet timestamp.");
+  lastPacketMatchDeltaMs = localPacket.timestamp - remotePacket.timestamp;
+  if (Math.abs(lastPacketMatchDeltaMs) > MAX_PACKET_MATCH_DISTANCE_MS) {
+    throw new Error(`Packet timestamps differ by ${format(lastPacketMatchDeltaMs, 0)} ms.`);
   }
-  remoteAudio.srcObject = stream;
+}
+
+async function requestScore() {
+  if (!dataConnection?.open || !clockSynchronized || pendingScoreRequest || comparisonInFlight) return;
+  comparisonInFlight = true;
+  updateRequestButton();
   try {
-    await remoteAudio.play();
+    const packet = await analyzer.prepareMicPacket();
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    pendingScoreRequest = { id: requestId, packet };
+    lastLocalPacket = packet;
+    analyzer.drawPacket(localPacketCanvas, localPacketSummary, packet);
+    comparisonInFlight = false;
+    updateRequestButton();
+    setCaptureStatus("Request sent. Waiting for the other device to score this packet…", "good");
+    dataConnection.send({ type: "score-request", requestId, packet: packetForTransport(packet) });
+    scoreRequestTimer = window.setTimeout(() => {
+      if (pendingScoreRequest?.id !== requestId) return;
+      clearScoreRequest();
+      lastComparisonError = "The other device did not answer the score request.";
+      setCaptureStatus(lastComparisonError, "error");
+      updateDebug();
+    }, SCORE_REQUEST_TIMEOUT_MS);
   } catch (error) {
-    // The element is muted, so autoplay should normally be allowed. The
-    // WebAudio graph remains the analysis source if a browser still rejects it.
-    setCaptureStatus(`Remote stream received; browser playback was not started (${error.message}).`, "warn");
-  }
-  localBuffer.clear();
-  remoteBuffer.clear();
-  remoteStreamReceivedAt = Date.now();
-  setRemoteHealth("connecting", "Remote stream received; checking that audio packets are arriving…");
-  remoteCapture = new RawStreamCapture(context, stream, (samples, sampleRate) => {
-    remoteBuffer.append(samples, sampleRate);
-  });
-  setConnectedView(true);
-  updateDebug();
-  setCaptureStatus("Remote stream received. Verifying media transport…", "warn");
-  startRemoteHealthMonitor();
-  startComparisons();
-}
-
-function stopRemoteHealthMonitor() {
-  if (remoteHealthTimer) window.clearInterval(remoteHealthTimer);
-  remoteHealthTimer = null;
-}
-
-function inboundAudioStats(report) {
-  let packets = 0;
-  let bytes = 0;
-  let found = false;
-  report.forEach((item) => {
-    if (item.type !== "inbound-rtp" || (item.kind || item.mediaType) !== "audio") return;
-    found = true;
-    packets += item.packetsReceived || 0;
-    bytes += item.bytesReceived || 0;
-  });
-  return { found, packets, bytes };
-}
-
-async function checkRemoteHealth() {
-  if (!activeCall || !remoteCapture) {
-    setRemoteHealth("waiting", "Waiting for a remote audio stream.");
-    return;
-  }
-  const track = remoteCapture.stream?.getAudioTracks?.()[0];
-  const connection = activeCall.peerConnection;
-  if (connection && ["failed", "closed"].includes(connection.connectionState || "")) {
-    setRemoteHealth("unavailable", `Peer media connection is ${connection.connectionState}; remote audio is unavailable. Check Wi-Fi, firewall, or TURN/ICE connectivity.`);
-    return;
-  }
-  if (connection && connection.connectionState === "disconnected") {
-    setRemoteHealth("unavailable", "Peer media connection is temporarily disconnected; waiting for remote audio to recover. No room-mismatch score will be produced.");
-    return;
-  }
-  if (connection && connection.iceConnectionState === "failed") {
-    setRemoteHealth("unavailable", "ICE negotiation failed; signaling connected, but the browsers could not establish a media path. Check Wi-Fi, firewall, or TURN/ICE connectivity.");
-    return;
-  }
-  if (track?.readyState === "ended") {
-    setRemoteHealth("unavailable", "The remote audio track ended; no remote microphone audio is available.");
-    return;
-  }
-  if (track?.muted) {
-    setRemoteHealth("unavailable", "The remote audio track is muted; no media is arriving. This is a connection problem, not a room-mismatch result.");
-    return;
-  }
-
-  let stats = { found: false, packets: 0, bytes: 0 };
-  if (connection?.getStats) stats = inboundAudioStats(await connection.getStats());
-  const graceExpired = remoteStreamReceivedAt && Date.now() - remoteStreamReceivedAt > REMOTE_MEDIA_GRACE_MS;
-  if (graceExpired && (!stats.found || stats.packets === 0 || stats.bytes === 0)) {
-    setRemoteHealth("unavailable", "Remote stream exists, but RTCP reports no inbound audio packets. Signaling may be connected while the media path is blocked by Wi-Fi, firewall, or ICE/TURN configuration.");
-    return;
-  }
-
-  const recent = remoteBuffer.snapshot(Math.min(2, remoteBuffer.seconds));
-  let energy = 0;
-  for (const sample of recent) energy += sample * sample;
-  const rms = recent.length ? Math.sqrt(energy / recent.length) : 0;
-  if (stats.packets > 0 && remoteBuffer.seconds >= 2 && rms < 1e-5) {
-    setRemoteHealth("silent", "Media packets are arriving, but the remote microphone is sending near-silence. Check microphone permission, input selection, and mute state.");
-    return;
-  }
-  if (stats.packets > 0 || remoteBuffer.seconds >= 1) {
-    setRemoteHealth("ready", "Remote audio transport is healthy. Collecting samples…");
-    setCaptureStatus("Both microphones connected. Collecting live audio…", "good");
+    comparisonInFlight = false;
+    clearScoreRequest();
+    lastComparisonError = `Could not send score request: ${error.message}`;
+    setCaptureStatus(lastComparisonError, "error");
   }
 }
 
-function startRemoteHealthMonitor() {
-  stopRemoteHealthMonitor();
-  checkRemoteHealth().catch((error) => setRemoteHealth("unavailable", `Could not inspect remote media transport: ${error.message}`));
-  remoteHealthTimer = window.setInterval(() => {
-    checkRemoteHealth().catch((error) => setRemoteHealth("unavailable", `Could not inspect remote media transport: ${error.message}`));
-  }, REMOTE_HEALTH_INTERVAL_MS);
-}
-
-function startComparisons() {
-  if (comparisonTimer) window.clearInterval(comparisonTimer);
-  comparisonTimer = window.setInterval(runComparison, COMPARISON_INTERVAL_MS);
-  runComparison();
-}
+setInterval(() => requestScore(), PACKET_INTERVAL_MS * 2.5);
 
 function renderResult(result) {
   lastResult = result;
@@ -585,121 +325,140 @@ function renderResult(result) {
   scoreOutput.textContent = `${format(result.score * 100, 1)}% — ${result.label}`;
   const scoreClass = result.label === "close" ? "good" : result.label === "middle" ? "warn" : "";
   scoreOutput.className = `score ${scoreClass}`;
-  const notes = result.quality.ok ? "quality ok" : result.quality.notes.join("; ");
-  qualityOutput.textContent = `Quality: ${notes || "quality warning"} · audio ${format(result.seconds, 1)} s · levels ${format(result.quality.level_dbfs, 0)} dBFS`;
-  const alignmentText = result.alignment
-    ? ` · alignment ${format(result.alignment.offset_seconds)} s / ${format(result.alignment.correlation)}${result.alignment.usable ? "" : " (weak)"}`
-    : "";
-  detailsOutput.textContent = `Features mel ${format(result.mel_peak)} · flux ${format(result.flux_peak)} · lags ${format(result.lags.mel)} / ${format(result.lags.flux)} s${alignmentText} · WASM ${format(result.wasm_ms, 0)} ms`;
+  qualityOutput.textContent = `Quality: ${resultQuality(result)} · audio ${format(result.seconds, 1)} s · levels ${format(result.quality.level_dbfs, 0)} dBFS`;
+  detailsOutput.textContent = `Features mel ${format(result.features.mel_peak)} · flux ${format(result.features.flux_peak)} · lags ${format(result.lags.mel)} / ${format(result.lags.flux)} s · WASM ${format(result.pairMs, 0)} ms`;
   renderConnectedScores();
-  sendLocalResult();
   updateDebug();
 }
 
-function sendLocalResult() {
-  if (!dataConnection?.open || !lastResult) return;
+async function handleScoreRequest(message) {
+  if (remoteRequestInFlight) {
+    dataConnection?.send({ type: "score-response", requestId: message.requestId, error: "This device is already scoring another request." });
+    return;
+  }
+  remoteRequestInFlight = true;
+  comparisonInFlight = true;
+  comparisonAttempts += 1;
+  lastComparisonAttemptAt = Date.now();
   try {
-    dataConnection.send({ type: "score", result: lastResult });
+    const requestPacket = message.packet;
+    const localPacket = await analyzer.prepareMicPacket();
+    validatePacketMatch(localPacket, requestPacket);
+    remotePacketCount += 1;
+    analyzer.drawPacket(remotePacketCanvas, remotePacketSummary, requestPacket);
+    const result = await analyzer.compare(localPacket, requestPacket);
+    renderResult(result);
+    setRemoteHealth("ready", "Last score request completed.");
+    dataConnection?.send({
+      type: "score-response",
+      requestId: message.requestId,
+      packet: packetForTransport(localPacket),
+      result,
+    });
   } catch (error) {
-    lastComparisonError = `Could not send score to remote device: ${error.message}`;
+    lastComparisonError = error.message;
+    setCaptureStatus(`Score request failed: ${error.message}`, "error");
+    dataConnection?.send({ type: "score-response", requestId: message.requestId, error: error.message });
+  } finally {
+    comparisonInFlight = false;
+    remoteRequestInFlight = false;
+    updateRequestButton();
+    updateDebug();
   }
 }
 
-async function runComparison() {
-  if (!localCapture || !remoteCapture) {
-    updateDebug();
+async function handleScoreResponse(message) {
+  if (!pendingScoreRequest || message.requestId !== pendingScoreRequest.id) return;
+  const request = pendingScoreRequest;
+  clearScoreRequest();
+  if (message.error) {
+    lastComparisonError = message.error;
+    setCaptureStatus(`Score request failed: ${message.error}`, "error");
     return;
   }
-  if (remoteHealth.state !== "ready") {
-    setCaptureStatus(remoteHealth.detail, remoteHealth.state === "silent" ? "warn" : "error");
-    updateDebug();
-    return;
-  }
+  comparisonInFlight = true;
   comparisonAttempts += 1;
   lastComparisonAttemptAt = Date.now();
-  if (comparisonInFlight) {
-    updateDebug();
-    return;
-  }
-  const localSeconds = localBuffer.seconds;
-  const remoteSeconds = remoteBuffer.seconds;
-  if (Math.min(localSeconds, remoteSeconds) < minComparisonSeconds) {
-    setCaptureStatus(`Collecting audio… local ${format(localSeconds, 1)} s, remote ${format(remoteSeconds, 1)} s`);
-    return;
-  }
-
-  comparisonInFlight = true;
   try {
-    const started = performance.now();
-    const sampleRate = localBuffer.sampleRate;
-    const localAudio = prepareSamples(localBuffer.snapshot(liveBufferSeconds), sampleRate, liveBufferSeconds);
-    const remoteAudio = prepareSamples(remoteBuffer.snapshot(liveBufferSeconds), remoteBuffer.sampleRate, liveBufferSeconds);
-    const alignment = estimateLiveOffset(localAudio, remoteAudio, MAX_ALIGNMENT_SECONDS, analysisSeconds);
-    const aligned = alignLiveBuffers(localAudio, remoteAudio, alignment.usable ? alignment.offset_seconds : 0, analysisSeconds);
-    const [preparedA, preparedB] = await Promise.all([analyzer.prepare(aligned.audioA), analyzer.prepare(aligned.audioB)]);
-    const result = await analyzer.compare(preparedA, preparedB);
-    Object.assign(result, { alignment, wasm_ms: performance.now() - started, total_ms: performance.now() - started });
+    validatePacketMatch(request.packet, message.packet);
+    remotePacketCount += 1;
+    analyzer.drawPacket(remotePacketCanvas, remotePacketSummary, message.packet);
+    const result = await analyzer.compare(request.packet, message.packet);
+    remoteResult = message.result || result;
     renderResult(result);
-    setCaptureStatus(`Live comparison updated. Next comparison in ${format(COMPARISON_INTERVAL_MS / 1000, 1)} s.`, "good");
+    renderConnectedScores();
+    setRemoteHealth("ready", "Last score request completed.");
+    dataConnection?.send({ type: "score-result", requestId: message.requestId, result });
+    setCaptureStatus("Score received. Press Request Score to compare again.", "good");
   } catch (error) {
     lastComparisonError = error.message;
-    setCaptureStatus(`Comparison failed: ${error.message}`, "error");
+    setCaptureStatus(`Score response failed: ${error.message}`, "error");
   } finally {
     comparisonInFlight = false;
+    updateRequestButton();
     updateDebug();
   }
 }
 
 function handlePeerError(error) {
   setPeerStatus(`Peer connection error: ${error.message || error.type || error}`, "error");
-  if (activeCall) setRemoteHealth("unavailable", `PeerJS reported a connection error: ${error.message || error.type || error}. Remote audio cannot be scored.`);
+  setRemoteHealth("unavailable", `PeerJS reported a connection error: ${error.message || error.type || error}. Score requests cannot be completed.`);
   createButton.disabled = false;
   joinButton.disabled = false;
-}
-
-function attachCall(call) {
-  if (activeCall && activeCall !== call) activeCall.close();
-  activeCall = call;
-  updateDebug();
-  call.on("stream", (stream) => startRemoteCapture(stream).catch((error) => setCaptureStatus(`Remote audio failed: ${error.message}`, "error")));
-  call.on("close", () => {
-    if (activeCall !== call) return;
-    activeCall = null;
-    if (remoteCapture) {
-      remoteCapture.dispose();
-      remoteCapture = null;
-    }
-    remoteAudio.pause();
-    remoteAudio.srcObject = null;
-    if (comparisonTimer) window.clearInterval(comparisonTimer);
-    stopRemoteHealthMonitor();
-    remoteStreamReceivedAt = null;
-    setRemoteHealth("waiting", "Waiting for a remote audio stream.");
-    setConnectedView(false);
-    setCaptureStatus("The other peer disconnected.", "warn");
-  });
-  call.on("error", handlePeerError);
 }
 
 function attachDataConnection(connection) {
   if (dataConnection && dataConnection !== connection) dataConnection.close();
   dataConnection = connection;
+  clockSynchronized = sessionRole === "host";
+  updateRequestButton();
   connection.on("open", () => {
-    sendLocalResult();
+    setConnectedView(true);
+    setPeerStatus("Peer connected. Press Request Score when ready.", "good");
+    setRemoteHealth("waiting", clockSynchronized ? "Connected; press Request Score." : "Connected; synchronizing clocks…");
+    if (sessionRole === "host") {
+      connection.send({ type: "clock-sync", timestamp: analyzer.currentTimestampMs });
+    }
+    updateRequestButton();
   });
   connection.on("data", (message) => {
-    if (!message || message.type !== "score" || !message.result) return;
-    remoteResult = message.result;
-    renderConnectedScores();
+    if (!message) return;
+    if (message.type === "clock-sync" && Number.isFinite(message.timestamp)) {
+      analyzer.currentTimestampMs = message.timestamp;
+      clockSynchronized = true;
+      setRemoteHealth("waiting", "Connected; press Request Score.");
+      updateRequestButton();
+      updateDebug();
+      return;
+    }
+    if (message.type === "score-request" && message.packet) {
+      void handleScoreRequest(message);
+      return;
+    }
+    if (message.type === "score-response") {
+      void handleScoreResponse(message);
+      return;
+    }
+    if (message.type === "score-result" && message.result) {
+      remoteResult = message.result;
+      renderConnectedScores();
+    }
   });
   connection.on("close", () => {
     if (dataConnection !== connection) return;
     dataConnection = null;
+    clearScoreRequest();
+    comparisonInFlight = false;
+    remoteRequestInFlight = false;
     remoteResult = null;
-    renderConnectedScores();
+    lastPacketMatchDeltaMs = null;
+    clockSynchronized = false;
+    setRemoteHealth("waiting", "Waiting for the peer data connection.");
+    setConnectedView(false);
+    setCaptureStatus("The other peer disconnected. Microphone packets remain local until another peer connects.", "warn");
   });
   connection.on("error", (error) => {
-    lastComparisonError = `Score sharing failed: ${error.message || error}`;
+    lastComparisonError = `Packet sharing failed: ${error.message || error}`;
     updateDebug();
   });
 }
@@ -714,11 +473,6 @@ async function createSession() {
     peer.on("open", (id) => {
       showInvite(id);
       setPeerStatus("Session ready. Share the QR code or invite link, then wait for the other peer.", "good");
-    });
-    peer.on("call", (call) => {
-      call.answer(localStream);
-      attachCall(call);
-      setPeerStatus("Incoming peer accepted. Waiting for remote audio…", "good");
     });
     peer.on("connection", attachDataConnection);
     peer.on("error", handlePeerError);
@@ -744,10 +498,10 @@ async function joinSession() {
     peer = new window.Peer();
     peer.on("open", (id) => {
       showInvite(id);
-      const call = peer.call(targetId, localStream);
-      attachCall(call);
-      attachDataConnection(peer.connect(targetId, { reliable: true }));
-      setPeerStatus(`Calling ${targetId}…`, "good");
+      // Requests and their responses are explicit, so ordered reliable
+      // delivery is appropriate and cannot build a continuous audio backlog.
+      attachDataConnection(peer.connect(targetId, { reliable: true, serialization: "binary" }));
+      setPeerStatus(`Connecting to ${targetId}…`, "good");
     });
     peer.on("error", handlePeerError);
     peer.on("disconnected", () => setPeerStatus("Peer signaling disconnected.", "warn"));
@@ -761,35 +515,29 @@ async function joinSession() {
 async function initialize() {
   const peerCode = new URLSearchParams(window.location.search).get("peer-code");
   if (peerCode) joinCodeInput.value = peerCode;
-  analyzer = await AudioCompare.fromObject({ modelUrl: "../model_output/model.json", wasmUrl: "../web-calibration/wasm_parity/wasm/same_room.wasm" });
+  analyzer = await AudioCompare.fromObject({
+    modelUrl: "../model_output/model.json",
+    wasmUrl: "../web-calibration/wasm_parity/wasm/same_room.wasm",
+  });
   modelConfig = analyzer.config;
   analysisSeconds = Math.max(modelConfig.window_sec, modelConfig.min_sec);
-  minComparisonSeconds = analysisSeconds + MAX_ALIGNMENT_SECONDS;
-  liveBufferSeconds = minComparisonSeconds + CAPTURE_MARGIN_SECONDS;
-  localBuffer = new RollingAudioBuffer(liveBufferSeconds);
-  remoteBuffer = new RollingAudioBuffer(liveBufferSeconds);
   analyzerReady = true;
+  analyzer.drawPacket(localPacketCanvas, localPacketSummary, null);
+  analyzer.drawPacket(remotePacketCanvas, remotePacketSummary, null);
   setPeerStatus(peerCode ? "Invite loaded. Start the microphone to join." : "Ready. Create a session or enter a peer code.");
 }
 
 createButton.addEventListener("click", createSession);
 joinButton.addEventListener("click", joinSession);
 copyInviteButton.addEventListener("click", copyInvite);
+requestScoreButton.addEventListener("click", requestScore);
 initialize().catch((error) => setPeerStatus(`Could not load analyzer: ${error.message}`, "error"));
 updateDebug();
-drawWaveforms();
+// The canvases are initialized after the analyzer loads below.
 
 window.addEventListener("beforeunload", () => {
-  if (comparisonTimer) window.clearInterval(comparisonTimer);
-  if (waveformAnimationFrame) window.cancelAnimationFrame(waveformAnimationFrame);
-  if (localCapture) localCapture.dispose();
-  if (remoteCapture) remoteCapture.dispose();
-  if (audioContext) audioContext.close();
-  if (localStream) localStream.getTracks().forEach((track) => track.stop());
-  if (activeCall) activeCall.close();
+  clearScoreRequest();
   if (dataConnection) dataConnection.close();
-  remoteAudio.pause();
-  remoteAudio.srcObject = null;
   if (peer) peer.destroy();
   if (analyzer) analyzer.dispose();
 });

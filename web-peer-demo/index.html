@@ -9,7 +9,7 @@
   <body>
     <main>
       <h1>Same-room live audio</h1>
-      <p class="intro">Connect two microphones and compare their live room sound. Audio is analyzed locally in a worker; the score is an estimate, not proof of co-location.</p>
+      <p class="intro">Connect two microphones and compare compact local audio features. Raw microphone audio stays on each device; the score is an estimate, not proof of co-location.</p>
 
       <section class="card setup">
         <h2>Connect peers</h2>
@@ -38,8 +38,8 @@
           </div>
           <div id="local-connected-score" class="split-score">Waiting for local audio…</div>
           <div id="local-connected-meta" class="split-meta">Your device’s score will appear here.</div>
-          <canvas id="local-connected-waveform" class="connected-waveform" width="640" height="160" role="img" aria-label="Local device waveform"></canvas>
-          <div id="local-connected-level" class="split-level">waiting for audio</div>
+          <div id="local-packet-summary" class="packet-summary">Waiting for packet data</div>
+          <canvas id="local-packet-visualization" class="packet-visualization" width="640" height="160" role="img" aria-label="Local compact audio feature packet visualization"></canvas>
         </article>
 
         <div class="score-summary" aria-label="Score summary">
@@ -48,6 +48,8 @@
           <span id="score-summary-min" class="summary-score" data-label="Min" aria-label="Minimum score">—</span>
         </div>
 
+        <button id="request-score" class="primary" type="button" disabled>Request Score</button>
+
         <article class="peer-half remote-half">
           <div class="peer-half-heading">
             <span class="peer-half-label">REMOTE DEVICE</span>
@@ -55,16 +57,15 @@
           </div>
           <div id="remote-connected-score" class="split-score">Waiting for remote score…</div>
           <div id="remote-connected-meta" class="split-meta">The other device’s score will appear here.</div>
-          <div id="remote-transport-status" class="transport-status">Waiting for a remote audio stream.</div>
-          <canvas id="remote-connected-waveform" class="connected-waveform" width="640" height="160" role="img" aria-label="Remote device waveform"></canvas>
-          <div id="remote-connected-level" class="split-level">waiting for audio</div>
+          <div id="remote-transport-status" class="transport-status">Waiting for a score request.</div>
+          <div id="remote-packet-summary" class="packet-summary">Waiting for packet data</div>
+          <canvas id="remote-packet-visualization" class="packet-visualization" width="640" height="160" role="img" aria-label="Remote compact audio feature packet visualization"></canvas>
         </article>
       </section>
 
       <section class="card live-panel">
         <h2>Live comparison</h2>
         <p id="capture-status" class="status">Connect to another peer to begin.</p>
-        <audio id="remote-audio" autoplay playsinline muted hidden></audio>
         <div id="result" class="result" hidden aria-live="polite">
           <div id="score" class="score"></div>
           <div id="result-quality" class="result-row"></div>
@@ -74,28 +75,16 @@
 
       <section class="card diagnostics-panel">
         <h2>Live diagnostics</h2>
-        <div class="waveform-grid">
-          <div class="waveform-panel">
-            <div class="meter-label"><span>Local microphone</span><strong id="local-waveform-level">waiting</strong></div>
-            <canvas id="local-waveform" width="640" height="120" role="img" aria-label="Local microphone waveform"></canvas>
-          </div>
-          <div class="waveform-panel">
-            <div class="meter-label"><span>Remote microphone</span><strong id="remote-waveform-level">waiting</strong></div>
-            <canvas id="remote-waveform" width="640" height="120" role="img" aria-label="Remote microphone waveform"></canvas>
-          </div>
+        <div class="meter-row">
+          <div class="meter-label"><span>Local prepared packets</span><strong id="local-buffer-label">0 packets</strong></div>
         </div>
         <div class="meter-row">
-          <div class="meter-label"><span>Local capture</span><strong id="local-buffer-label">0.0 / loading model</strong></div>
-          <progress id="local-buffer-progress" max="1" value="0"></progress>
-        </div>
-        <div class="meter-row">
-          <div class="meter-label"><span>Remote capture</span><strong id="remote-buffer-label">0.0 / loading model</strong></div>
-          <progress id="remote-buffer-progress" max="1" value="0"></progress>
+          <div class="meter-label"><span>Remote packets</span><strong id="remote-buffer-label">0 packets received</strong></div>
         </div>
         <pre id="debug-output" class="debug-output">Analyzer loading…</pre>
       </section>
 
-      <p class="privacy">Raw microphone capture is requested with echo cancellation, noise suppression, and automatic gain control disabled. Browser, operating-system, hardware, and WebRTC processing may still affect the signal. Only short in-memory buffers are retained by this page.</p>
+      <p class="privacy">Raw microphone audio is processed locally by AudioCompare. Only compact timestamped feature packets and scores are sent to the peer. Browser, operating-system, and hardware processing may still affect the signal.</p>
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>

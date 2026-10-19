@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script type="module">
+import { AudioCompare } from './exports/compare/compare.js';
+const keepAwake = new NoSleep();
+const refreshConfirm = (() => {
+  function handleBeforeUnload(event) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+  return {
+    enable: () => window.addEventListener("beforeunload", handleBeforeUnload),
+    disable: () => window.removeEventListener("beforeunload", handleBeforeUnload),
+  };
+})();
+
+
+    </script>
+</body>
+</html>

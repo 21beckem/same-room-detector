@@ -4,7 +4,7 @@ class AudioCompareCaptureProcessor extends AudioWorkletProcessor {
     const output = outputs[0]?.[0];
     if (input?.length) {
       const samples = new Float32Array(input);
-      this.port.postMessage({ samples, startFrame: currentFrame }, [samples.buffer]);
+      this.port.postMessage(samples, [samples.buffer]);
     }
     if (output) output.fill(0);
     return true;

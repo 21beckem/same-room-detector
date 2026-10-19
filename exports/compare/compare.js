@@ -9,6 +9,7 @@ const DEFAULT_WASM_URL = new URL("../../web-calibration/wasm_parity/wasm/same_ro
 const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_MIC_HISTORY_SECONDS = 30;
 const DEFAULT_MIC_PACKET_INTERVAL_MS = 250;
+const MIC_CAPTURE_STALL_MS = 1500;
 
 function resolveResourceUrl(value) {
   const base = typeof location === "undefined" ? import.meta.url : location.href;
@@ -72,6 +73,120 @@ function latestSamples(chunks, totalSamples, sampleCount) {
     remaining -= take;
   }
   return result;
+}
+
+const PACKET_HEADER_BYTES = 688;
+const N_MELS = 40;
+
+function packetBufferForDrawing(packet) {
+  if (packet instanceof ArrayBuffer) return packet;
+  if (packet?.buffer instanceof ArrayBuffer) return packet.buffer;
+  if (packet?.packet instanceof ArrayBuffer) return packet.packet;
+  return null;
+}
+
+function parsePacketForDrawing(packet) {
+  const buffer = packetBufferForDrawing(packet);
+  if (!buffer || buffer.byteLength < PACKET_HEADER_BYTES) return null;
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const quantized = view.getInt32(8, true) !== 0;
+  const bits = view.getInt32(12, true);
+  const frameCount = view.getInt32(28, true);
+  const rms = view.getFloat64(32, true);
+  const activity = view.getFloat64(40, true);
+  if (frameCount < 1 || frameCount > 100000) return null;
+
+  const valuesPerSample = quantized ? 1 : 8;
+  const expectedBytes = PACKET_HEADER_BYTES + N_MELS * frameCount * valuesPerSample;
+  if (expectedBytes > bytes.length) return null;
+
+  const mel = new Float32Array(N_MELS * frameCount);
+  const offsets = new Float64Array(N_MELS);
+  const scales = new Float64Array(N_MELS);
+  let offset = 48 + N_MELS * 8;
+  for (let band = 0; band < N_MELS; band += 1) offsets[band] = view.getFloat64(48 + band * 8, true);
+  for (let band = 0; band < N_MELS; band += 1) scales[band] = view.getFloat64(offset + band * 8, true);
+  offset += N_MELS * 8;
+
+  for (let band = 0; band < N_MELS; band += 1) {
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      const index = band * frameCount + frame;
+      mel[index] = quantized
+        ? offsets[band] + scales[band] * bytes[offset + index] / ((1 << bits) - 1)
+        : view.getFloat64(offset + index * 8, true);
+    }
+  }
+  return { mel, frameCount, rms, activity, quantized, bits };
+}
+
+function packetColor(value) {
+  const stops = [[8, 20, 48], [20, 110, 180], [70, 210, 190], [250, 220, 80], [220, 40, 30]];
+  const scaled = Math.max(0, Math.min(1, value)) * (stops.length - 1);
+  const lower = Math.min(stops.length - 2, Math.floor(scaled));
+  const amount = scaled - lower;
+  const from = stops[lower];
+  const to = stops[lower + 1];
+  return [
+    Math.round(from[0] + (to[0] - from[0]) * amount),
+    Math.round(from[1] + (to[1] - from[1]) * amount),
+    Math.round(from[2] + (to[2] - from[2]) * amount),
+  ];
+}
+
+function renderPacket(canvas, summary, packet) {
+  const parsed = parsePacketForDrawing(packet);
+  const rect = canvas.getBoundingClientRect();
+  const cssWidth = Math.max(1, Math.floor(rect.width || 640));
+  const cssHeight = Math.max(80, Math.floor(rect.height || 160));
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.floor(cssWidth * pixelRatio));
+  const height = Math.max(1, Math.floor(cssHeight * pixelRatio));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  const context = canvas.getContext("2d");
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#081430";
+  context.fillRect(0, 0, width, height);
+  if (!parsed) {
+    context.fillStyle = "#aab7ca";
+    context.font = `${13 * pixelRatio}px system-ui, sans-serif`;
+    context.fillText("Waiting for a prepared packet…", 12 * pixelRatio, 24 * pixelRatio);
+    summary.textContent = "Waiting for packet data";
+    return;
+  }
+
+  const rowRanges = Array.from({ length: N_MELS }, (_, band) => {
+    let low = Infinity;
+    let high = -Infinity;
+    for (let frame = 0; frame < parsed.frameCount; frame += 1) {
+      const value = parsed.mel[band * parsed.frameCount + frame];
+      low = Math.min(low, value);
+      high = Math.max(high, value);
+    }
+    return [low, high];
+  });
+  const image = context.createImageData(width, height);
+  for (let y = 0; y < height; y += 1) {
+    const band = N_MELS - 1 - Math.min(N_MELS - 1, Math.floor(y * N_MELS / height));
+    const [low, high] = rowRanges[band];
+    for (let x = 0; x < width; x += 1) {
+      const frame = Math.min(parsed.frameCount - 1, Math.floor(x * parsed.frameCount / width));
+      const value = parsed.mel[band * parsed.frameCount + frame];
+      const rgb = packetColor((value - low) / Math.max(high - low, 1e-6));
+      const index = (y * width + x) * 4;
+      image.data[index] = rgb[0];
+      image.data[index + 1] = rgb[1];
+      image.data[index + 2] = rgb[2];
+      image.data[index + 3] = 255;
+    }
+  }
+  context.putImageData(image, 0, 0);
+  summary.textContent = `${parsed.frameCount} frames · ${parsed.rms.toFixed(1)} dBFS · activity ${parsed.activity.toFixed(1)} dB · ${parsed.quantized ? `${parsed.bits}-bit` : "raw"} mel`;
 }
 
 export class AudioComparison {
@@ -224,6 +339,11 @@ export class AudioCompare {
     return comparison;
   }
 
+  /** Draws a compact packet's mel payload for diagnostics without exposing audio. */
+  drawPacket(canvas, summary, packet) {
+    renderPacket(canvas, summary, packet);
+  }
+
   /**
    * Starts a raw microphone pipeline. The browser asks for permission here,
    * so call this from a user gesture such as a button click. Audio is reduced
@@ -233,6 +353,7 @@ export class AudioCompare {
   async pipeMicAudio({
     historySeconds = DEFAULT_MIC_HISTORY_SECONDS,
     packetIntervalMs = DEFAULT_MIC_PACKET_INTERVAL_MS,
+    prepareOnPacket = true,
     sampleRate = DEFAULT_SAMPLE_RATE,
     constraints = {},
     audioContextOptions = {},
@@ -296,15 +417,17 @@ export class AudioCompare {
         sampleRate,
         historySeconds,
         packetIntervalMs,
+        prepareOnPacket,
         analysisSamples: Math.ceil((this.config.window_sec ?? 5) * sampleRate),
         rawChunks: [],
         rawSampleCount: 0,
         packetHistory: [],
         lastPreparedTimestamp: -Infinity,
         prepareInFlight: false,
+        preparePromise: null,
+        lastCaptureAt: 0,
         onPacket,
         onError,
-        clockOriginMs: nowMilliseconds() - context.currentTime * 1000,
       };
       this.micState = state;
       captureNode.port.onmessage = (event) => {
@@ -313,10 +436,8 @@ export class AudioCompare {
         const samples = payload.samples instanceof Float32Array
           ? payload.samples
           : new Float32Array(payload.samples || payload);
-        const endFrame = Number.isFinite(payload.startFrame)
-          ? payload.startFrame + samples.length
-          : null;
-        this.#consumeMicChunk(state, samples, endFrame);
+        state.lastCaptureAt = nowMilliseconds();
+        this.#consumeMicChunk(state, samples);
       };
       return this;
     } catch (error) {
@@ -329,7 +450,7 @@ export class AudioCompare {
     }
   }
 
-  #consumeMicChunk(state, samples, endFrame) {
+  #consumeMicChunk(state, samples) {
     if (!samples.length) return;
     const chunk = Float32Array.from(samples);
     state.rawChunks.push(chunk);
@@ -340,9 +461,13 @@ export class AudioCompare {
       state.rawSampleCount -= state.rawChunks.shift().length;
     }
 
-    const timestamp = endFrame === null
-      ? this.currentTimestampMs
-      : state.clockOriginMs + (endFrame / state.sampleRate) * 1000 + this.timestampOffsetMs;
+    // Use the adjusted wall clock at delivery time instead of extending one
+    // AudioContext frame-clock anchor forever. Independent microphone/audio
+    // clocks can drift apart over a long session; wall-clock timestamps keep
+    // the packet pairing clock aligned while the chunk delivery delay is only
+    // one worklet block.
+    const timestamp = this.currentTimestampMs;
+    if (!state.prepareOnPacket) return;
     if (
       state.rawSampleCount < state.analysisSamples
       || state.prepareInFlight
@@ -366,6 +491,59 @@ export class AudioCompare {
       .finally(() => {
         state.prepareInFlight = false;
       });
+  }
+
+  /**
+   * Prepares exactly one packet from the most recent microphone window.
+   * This is useful for request-driven applications that want to keep capture
+   * local but avoid repeatedly preparing packets while no comparison is needed.
+   */
+  async prepareMicPacket(timestamp = this.currentTimestampMs) {
+    const state = this.micState;
+    if (!state) throw new Error("No microphone pipeline is running.");
+    let resumed = false;
+    if (state.context.state !== "running") {
+      try {
+        await state.context.resume();
+        resumed = true;
+      } catch (error) {
+        throw new Error(`Microphone audio is not running (${state.context.state}): ${error.message}`);
+      }
+    }
+    const captureAge = state.lastCaptureAt ? nowMilliseconds() - state.lastCaptureAt : Infinity;
+    if (resumed || captureAge > MIC_CAPTURE_STALL_MS) {
+      // Do not score an old window after a background tab or suspended audio
+      // context. The caller must collect a fresh model-sized window first.
+      state.rawChunks = [];
+      state.rawSampleCount = 0;
+      state.lastCaptureAt = 0;
+      throw new Error("Microphone capture was paused or stalled; it has been resumed. Wait for a fresh 5-second window and try again.");
+    }
+    if (state.rawSampleCount < state.analysisSamples) {
+      throw new Error(`Still collecting microphone audio; need ${this.config.window_sec ?? 5} seconds first.`);
+    }
+    if (state.prepareInFlight) {
+      return state.preparePromise;
+    }
+    const audio = latestSamples(state.rawChunks, state.rawSampleCount, state.analysisSamples);
+    state.prepareInFlight = true;
+    const packetPromise = this.prepare(audio, {
+      timestamp: Number.isFinite(timestamp) ? timestamp : this.currentTimestampMs,
+    })
+      .then((packet) => {
+        if (this.micState !== state) return packet;
+        state.lastPreparedTimestamp = packet.timestamp;
+        state.packetHistory.push(packet);
+        const cutoff = packet.timestamp - state.historySeconds * 1000;
+        state.packetHistory = state.packetHistory.filter((item) => item.timestamp >= cutoff);
+        state.onPacket?.(copyPacket(packet));
+        return copyPacket(packet);
+      })
+      .finally(() => {
+        state.prepareInFlight = false;
+      });
+    state.preparePromise = packetPromise;
+    return packetPromise;
   }
 
   /** Returns a copy of the microphone packet nearest to the requested time. */
