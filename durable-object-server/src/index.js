@@ -85,7 +85,6 @@ export class WebSocketServer extends DurableObject {
 		// if message is binary data
 		if (message instanceof ArrayBuffer) {
 			ws.serializeAttachment({ ...attachment, audioPacket: message });
-			ws.send(JSON.stringify({ type: 'audioPacketReceived', length: message.byteLength }));
 			return;
 		}
 
@@ -97,8 +96,13 @@ export class WebSocketServer extends DurableObject {
 		if (msg.type === 'compare') {
 			if (typeof msg.with !== 'string') return;
 
+			if (msg.with === attachment.clientId) {
+				ws.send(JSON.stringify({ type: 'compare', error: 'Cannot compare with self' }));
+				return;
+			}
+
 			if (!(attachment.audioPacket instanceof ArrayBuffer)) {
-				ws.send(JSON.stringify({ type: 'compare', result: false, reason: 'No audio packet received yet' }));
+				ws.send(JSON.stringify({ type: 'compare', error: 'No audio packet received yet' }));
 				return;
 			}
 
@@ -106,18 +110,22 @@ export class WebSocketServer extends DurableObject {
 				.getWebSockets()
 				.find((socket) => socket.deserializeAttachment()?.clientId === msg.with);
 			if (!otherSocket) {
-				ws.send(JSON.stringify({ type: 'compare', result: false, reason: 'Other client not found' }));
+				ws.send(JSON.stringify({ type: 'compare', error: 'Other client not found' }));
 				return;
 			}
 
 			const otherAttachment = otherSocket.deserializeAttachment();
 			if (!(otherAttachment?.audioPacket instanceof ArrayBuffer)) {
-				ws.send(JSON.stringify({ type: 'compare', result: false, reason: 'Other client has no audio packet' }));
+				ws.send(JSON.stringify({ type: 'compare', error: 'Other client has no audio packet' }));
 				return;
 			}
 
 			const result = await compareAudioPackets(attachment.audioPacket, otherAttachment.audioPacket);
-			ws.send(JSON.stringify({ type: 'compare', result }));
+			ws.send(JSON.stringify({
+				type: 'compare',
+				result,
+				clients: [attachment.clientId, otherAttachment.clientId],
+			}));
 		}
 	}
 
