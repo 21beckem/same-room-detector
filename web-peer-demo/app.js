@@ -291,6 +291,7 @@ async function requestScore() {
   updateRequestButton();
   try {
     const packet = await analyzer.prepareMicPacket();
+    console.log('packet', packet);
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     pendingScoreRequest = { id: requestId, packet };
     lastLocalPacket = packet;
@@ -314,7 +315,7 @@ async function requestScore() {
   }
 }
 
-setInterval(() => requestScore(), 500);
+// setInterval(() => requestScore(), 1000);
 
 function renderResult(result) {
   lastResult = result;

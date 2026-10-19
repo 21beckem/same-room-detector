@@ -1,0 +1,16 @@
+{
+  "name": "durable-object-server",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.151.2"
+  },
+  "dependencies": {
+    "@assemblyscript/loader": "^0.28.20"
+  }
+}
