@@ -20,4 +20,6 @@ Then open <http://localhost:3000>.
 The demo uses the reusable `exports/compare/compare.js` API. `AudioCompare`
 owns the worker and exposes `prepare(audio)`, `compare(packetA, packetB)`, and
 `dispose()`. Each input is converted once into an 8-bit mel packet by default,
-and the pair scorer receives only the two serialized packet buffers.
+and the pair scorer receives only the two serialized packet buffers. Prepared
+packets are timestamped objects with a `buffer` property; the package README
+also documents the rolling microphone API.

@@ -110,6 +110,7 @@ const staticFiles = new Map([
   ["/exports/compare/compare.js", [path.join(COMPARE_ROOT, "compare.js"), MIME_TYPES[".js"]]],
   ["/exports/compare/compare-worker.js", [path.join(COMPARE_ROOT, "compare-worker.js"), MIME_TYPES[".js"]]],
   ["/exports/compare/assemblyscript-loader.js", [path.join(COMPARE_ROOT, "assemblyscript-loader.js"), MIME_TYPES[".js"]]],
+  ["/exports/compare/mic-capture-worklet.js", [path.join(COMPARE_ROOT, "mic-capture-worklet.js"), MIME_TYPES[".js"]]],
 ]);
 
 const server = http.createServer((req, res) => {
