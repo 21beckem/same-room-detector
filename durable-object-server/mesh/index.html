@@ -4,15 +4,37 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mesh Test with Durable Object Server</title>
+    <style>
+.btns-box {
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+}
+@media (max-width: 720px) {
+    .btns-box {
+        flex-direction: column;
+    }
+}
+.btns-box button {
+    aspect-ratio: 1;
+    width: 100vw;
+    height: 100vh;
+    min-width: 100px;
+    min-height: 100px;
+    max-width: calc(100vw - 20px);
+    max-height: calc(100vh - 500px);
+}
+    </style>
 </head>
 <body>
-    <br><br>
+    <br>
     <center>
         <div id="status">...</div>
-        <br><br>
-        <button id="start-recording-btn" style="aspect-ratio: 1; width: calc(100vw - 20px);">Start Recording</button>
-        <br><br><br><br>
-        <button id="run-btn" style="padding: 20px 40px;">Run</button>
+        <br>
+        <div class="btns-box">
+            <button id="start-recording-btn">Start Recording</button>
+            <button id="run-btn" disabled>Run</button>
+        </div>
     </center>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>

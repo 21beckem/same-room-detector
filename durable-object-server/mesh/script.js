@@ -27,7 +27,7 @@ const keepAlive = (() => {
         disable: () => { keepAwake.disable(); /* window.removeEventListener('beforeunload', handleBeforeUnload); */ },
     };
 })();
-const WebSocketServerUri = isHostedLocally ? 'ws://localhost:8787' : 'wss://durable-object-server.21beckem8.workers.dev';
+const WebSocketServerUri = isHostedLocally ? `ws://${location.hostname}:8787` : 'wss://durable-object-server.21beckem8.workers.dev';
 
 const runBtn = document.getElementById('run-btn');
 runBtn.addEventListener('click', () => {
@@ -43,13 +43,17 @@ try {
     debug.status('Connected to server. Click "Start Recording" to begin.');
 } catch (err) {
     console.error('Failed to connect to server:', err);
-    alert('Failed to connect to server. See console for details.');
+    alert('Failed to connect to server. ' + err.message);
 }
 const analyzer = await AudioCompare.fromObject({});
 link.handle('audioRequest', async (msg, ctx) => {
     debug.log('Received audio request from server:', msg);
-    const packet = await analyzer.waitForLocalPacket();
-    return { fields: { ts: packet.timestamp }, payload: packet.buffer };
+    try {
+        const packet = await analyzer.waitForLocalPacket();
+        return { fields: { ts: packet.timestamp }, payload: packet.buffer };
+    } catch (err) {
+        console.error('Failed to wait for local packet:', err);
+    }
 });
 link.on('colocation', (msg, ctx) => {
     const { score, peer } = msg.fields;
@@ -66,4 +70,6 @@ startRecordingBtn.addEventListener('click', () => {
     startRecordingBtn.disabled = true;
     analyzer.pipeMicAudio();
     keepAlive.enable();
+    
+    setTimeout(() => runBtn.disabled = false, 6000);
 });

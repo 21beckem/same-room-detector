@@ -75,6 +75,40 @@ function latestSamples(chunks, totalSamples, sampleCount) {
   return result;
 }
 
+let playingSamplesSource = null;
+function playSamples(samples, sampleRate = DEFAULT_SAMPLE_RATE) {
+  if (playingSamplesSource) return;
+
+  const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
+  if (!AudioContextClass) throw new Error("Playing samples requires Web Audio support.");
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    throw new RangeError("sampleRate must be a positive number.");
+  }
+
+  const values = Float32Array.from(samples);
+  if (!values.length) return null;
+  if (!playSamples.context || playSamples.context.state === "closed") {
+    playSamples.context = new AudioContextClass({ sampleRate });
+  }
+
+  const context = playSamples.context;
+  const buffer = context.createBuffer(1, values.length, sampleRate);
+  buffer.copyToChannel(values, 0);
+  playingSamplesSource = context.createBufferSource();
+  playingSamplesSource.buffer = buffer;
+  playingSamplesSource.connect(context.destination);
+  playingSamplesSource.onended = () => {
+    playingSamplesSource.disconnect();
+    playingSamplesSource = null;
+  };
+
+  const start = () => {
+    playingSamplesSource.start();
+    return playingSamplesSource;
+  };
+  return context.state === "suspended" ? context.resume().then(start) : start();
+}
+
 const PACKET_HEADER_BYTES = 688;
 const N_MELS = 40;
 
@@ -552,6 +586,7 @@ export class AudioCompare {
       return state.preparePromise;
     }
     const audio = latestSamples(state.rawChunks, state.rawSampleCount, state.analysisSamples);
+    playSamples(audio, state.sampleRate);
     state.prepareInFlight = true;
     const packetPromise = this.prepare(audio, {
       timestamp: Number.isFinite(timestamp) ? timestamp : this.currentTimestampMs,
