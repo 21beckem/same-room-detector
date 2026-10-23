@@ -8,7 +8,7 @@
 //   link.send('begin', { kind: 1 });
 //   const reply = await link.request('getData', { slot: 2 });
 
-import { schema as defaultSchema, MESSAGES } from './schema.js';
+import { schema as defaultSchema } from './schema.js';
 import { Codec, ProtocolVersionError } from './codec.js';
 import { Endpoint, Router, ConnectionClosedError } from './endpoint.js';
 

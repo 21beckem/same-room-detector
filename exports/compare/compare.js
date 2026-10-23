@@ -425,6 +425,7 @@ export class AudioCompare {
         lastPreparedTimestamp: -Infinity,
         prepareInFlight: false,
         preparePromise: null,
+        packetWaiters: [],
         lastCaptureAt: 0,
         onPacket,
         onError,
@@ -467,7 +468,10 @@ export class AudioCompare {
     // the packet pairing clock aligned while the chunk delivery delay is only
     // one worklet block.
     const timestamp = this.currentTimestampMs;
-    if (!state.prepareOnPacket) return;
+    if (!state.prepareOnPacket) {
+      this.#prepareWaitingMicPacket(state);
+      return;
+    }
     if (
       state.rawSampleCount < state.analysisSamples
       || state.prepareInFlight
@@ -479,18 +483,40 @@ export class AudioCompare {
     this.prepare(audio, { timestamp })
       .then((packet) => {
         if (this.micState !== state) return;
-        state.lastPreparedTimestamp = packet.timestamp;
-        state.packetHistory.push(packet);
-        const cutoff = packet.timestamp - state.historySeconds * 1000;
-        state.packetHistory = state.packetHistory.filter((item) => item.timestamp >= cutoff);
-        state.onPacket?.(copyPacket(packet));
+        this.#storeMicPacket(state, packet);
       })
       .catch((error) => {
-        if (this.micState === state) state.onError?.(error);
+        if (this.micState === state) {
+          state.onError?.(error);
+          for (const waiter of state.packetWaiters.splice(0)) waiter.reject(error);
+        }
       })
       .finally(() => {
         state.prepareInFlight = false;
+        this.#prepareWaitingMicPacket(state);
       });
+  }
+
+  #storeMicPacket(state, packet) {
+    state.lastPreparedTimestamp = packet.timestamp;
+    state.packetHistory.push(packet);
+    const cutoff = packet.timestamp - state.historySeconds * 1000;
+    state.packetHistory = state.packetHistory.filter((item) => item.timestamp >= cutoff);
+    state.onPacket?.(copyPacket(packet));
+    for (const waiter of state.packetWaiters.splice(0)) {
+      const localPacket = this.getLocalPacket(waiter.desiredTimestamp);
+      if (localPacket) waiter.resolve(localPacket);
+      else waiter.reject(new Error("The prepared microphone packet is no longer available."));
+    }
+  }
+
+  #prepareWaitingMicPacket(state) {
+    if (this.micState !== state || state.prepareOnPacket || !state.packetWaiters.length) return;
+    if (state.rawSampleCount < state.analysisSamples || state.prepareInFlight) return;
+    this.prepareMicPacket().catch((error) => {
+      if (this.micState !== state) return;
+      for (const waiter of state.packetWaiters.splice(0)) waiter.reject(error);
+    });
   }
 
   /**
@@ -532,11 +558,7 @@ export class AudioCompare {
     })
       .then((packet) => {
         if (this.micState !== state) return packet;
-        state.lastPreparedTimestamp = packet.timestamp;
-        state.packetHistory.push(packet);
-        const cutoff = packet.timestamp - state.historySeconds * 1000;
-        state.packetHistory = state.packetHistory.filter((item) => item.timestamp >= cutoff);
-        state.onPacket?.(copyPacket(packet));
+        this.#storeMicPacket(state, packet);
         return copyPacket(packet);
       })
       .finally(() => {
@@ -544,6 +566,26 @@ export class AudioCompare {
       });
     state.preparePromise = packetPromise;
     return packetPromise;
+  }
+
+  /**
+   * Waits for a prepared microphone packet, collecting enough audio first when
+   * packet preparation is configured on demand.
+   */
+  async waitForLocalPacket(desiredTimestamp = this.currentTimestampMs) {
+    if (!Number.isFinite(desiredTimestamp)) {
+      throw new TypeError("waitForLocalPacket() needs a finite timestamp.");
+    }
+    const existingPacket = this.getLocalPacket(desiredTimestamp);
+    if (existingPacket) return existingPacket;
+    const state = this.micState;
+    if (!state) throw new Error("No microphone pipeline is running.");
+
+    const packet = await new Promise((resolve, reject) => {
+      state.packetWaiters.push({ desiredTimestamp, resolve, reject });
+      this.#prepareWaitingMicPacket(state);
+    });
+    return packet;
   }
 
   /** Returns a copy of the microphone packet nearest to the requested time. */
@@ -580,6 +622,10 @@ export class AudioCompare {
     const state = this.micState;
     if (!state) return;
     this.micState = null;
+    for (const waiter of state.packetWaiters) {
+      waiter.reject(new Error("Microphone capture stopped before a packet was ready."));
+    }
+    state.packetWaiters = [];
     state.captureNode.port.onmessage = null;
     state.captureNode.disconnect();
     state.source.disconnect();
@@ -597,4 +643,3 @@ export class AudioCompare {
     this.pending.clear();
   }
 }
-

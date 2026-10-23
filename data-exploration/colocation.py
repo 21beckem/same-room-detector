@@ -619,6 +619,11 @@ def cmd_train(args):
     plot_space(rows, targets, out / "feature_space.png", FEATURES)
     print(f"\nWrote model.json, cv_pairs.csv, train_windows.csv, cv_scores.png, feature_space.png to {out.resolve()}")
 
+    # copy the model to the durable object server since it can't reach the local filesystem
+    with open("../durable-object-server/src/model.json", "w") as fh:
+        json.dump(model, fh, indent=2)
+    print("Copied model.json to ../durable-object-server/src/model.json for the server to use.")
+
 
 def cmd_score(args):
     with open(args.model) as fh:

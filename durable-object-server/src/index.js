@@ -1,11 +1,21 @@
 import { DurableObject } from 'cloudflare:workers';
 import { compareAudioPackets } from './wasm.js';
 import { ProtocolServer } from './protocol/server.js';
+import modelJson from './model.json' with { type: 'json' };
 
 export class WebSocketServer extends DurableObject {
 	constructor(state, env) {
 		super(state, env);
 		this.link = new ProtocolServer(state);
+		if (this.tsUpdateId) clearInterval(this.tsUpdateId);
+		this.tsUpdateId = setInterval(() => {
+			this.link.broadcast('tsUpdate', { ts: Date.now() });
+		}, modelJson.config.min_sec * 1000);
+
+		this.link.on('socket:open', ({ ws, uid }) => {
+			const { ip } = this.link.getAttachment(ws);
+			console.log(`Client ${uid} connected from IP ${ip}`);
+		});
 
 		this.link.on('trigger', async (msg, ctx) => {
 			if (this.link.sockets.length < 2) {
@@ -13,17 +23,31 @@ export class WebSocketServer extends DurableObject {
 				return;
 			}
 			const [client1, client2] = this.link.sockets;
-			const [res1, res2] = await Promise.all([
+			let [res1, res2] = await Promise.all([
 				this.link.request(client1.ws, 'audioRequest', { }),
 				this.link.request(client2.ws, 'audioRequest', { }),
 			]);
+
+			if (Math.abs(res1.fields.ts - res2.fields.ts) > 2000) {
+				// audio packets are too far apart in time to be meaningfully compared
+				// this may be because one of the clients wasn't ready when we first requested
+				// try one more time
+				[res1, res2] = await Promise.all([
+					this.link.request(client1.ws, 'audioRequest', { }),
+					this.link.request(client2.ws, 'audioRequest', { }),
+				]);
+				if (Math.abs(res1.fields.ts - res2.fields.ts) > 2000) {
+					console.log('Audio packets are too far apart in time');
+					return;
+				}
+			}
 
 			const score = await compareAudioPackets(res1.payload, res2.payload);
 			this.link.send(client1.ws, 'colocation', { score, peer: client2.uid });
 			this.link.send(client2.ws, 'colocation', { score, peer: client1.uid });
 		});
 	}
-	fetch(request) { return this.link.accept(); }
+	fetch(req) { return this.link.accept(req); }
 	webSocketMessage(ws, data) { return this.link.handleMessage(ws, data); }
 	webSocketClose(ws, code, reason, ok) { return this.link.handleClose(ws, code, reason, ok); }
 	webSocketError(ws, err) { return this.link.handleError(ws, err); }

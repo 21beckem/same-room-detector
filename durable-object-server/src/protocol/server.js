@@ -21,7 +21,7 @@
 // again, which is how they get re-registered. Per-socket state that must survive
 // hibernation lives in the socket attachment (uid + base time are stored there; 2 KB max).
 
-import { schema as defaultSchema, MESSAGES } from './schema.js';
+import { schema as defaultSchema } from './schema.js';
 import { Codec, ProtocolError, ProtocolVersionError } from './codec.js';
 import { Endpoint, Router } from './endpoint.js';
 
@@ -42,15 +42,16 @@ export class ProtocolServer extends Router {
   // ----- connections ------------------------------------------------------
 
   /** Call from fetch(). Accepts the upgrade and returns the 101 Response. */
-  accept(options) {
+  accept(req, options) {
+    const ip = req.headers.get('CF-Connecting-IP');
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-    this.attach(server, options);
+    this.attach(server, { ...options, ip });
     return new Response(null, { status: 101, webSocket: client });
   }
 
   /** Register an already-created server-side socket: assigns a uid and sends `hello`. */
-  attach(ws, { tags } = {}) {
+  attach(ws, { tags, ip } = {}) {
     const used = new Set();
     for (const w of this.state.getWebSockets()) {
       const uid = w.deserializeAttachment()?.uid;
@@ -62,7 +63,7 @@ export class ProtocolServer extends Router {
 
     const base = Date.now();
     this.state.acceptWebSocket(ws, tags);
-    ws.serializeAttachment({ uid, base });
+    ws.serializeAttachment({ uid, base, ip });
 
     const ep = this._endpoint(ws);
     ep.send('hello', { uid, base, now: Date.now() });

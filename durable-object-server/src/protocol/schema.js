@@ -50,19 +50,20 @@ export const schema = {
     // trigger event
     trigger: { fields: {} },
 
-    // client -> server: "I'm starting something"
-    begin:    { fields: { ts: 'ts', kind: 'u8' } },
+    // timestamp update from server to client
+    tsUpdate: { fields: { ts: 'ts' } },
 
-    // server -> client(s): something changed (uid says who did it)
-    update:   { fields: { uid: 'uid', ts: 'ts', slot: 'u8' }, payload: true },
+    // // client -> server: "I'm starting something"
+    // begin:    { fields: { ts: 'ts', kind: 'u8' } },
 
-    // server -> client: "send me slot N" ... client answers with `data`
-    getData:  { fields: { slot: 'u8' }, reply: 'data' },
-    data:     { fields: { slot: 'u8' }, payload: true },
+    // // server -> client(s): something changed (uid says who did it)
+    // update:   { fields: { uid: 'uid', ts: 'ts', slot: 'u8' }, payload: true },
 
-    // anything, either direction
-    notice:   { fields: { text: 'str' } },
+    // // server -> client: "send me slot N" ... client answers with `data`
+    // getData:  { fields: { slot: 'u8' }, reply: 'data' },
+    // data:     { fields: { slot: 'u8' }, payload: true },
+
+    // // anything, either direction
+    // notice:   { fields: { text: 'str' } },
   },
 };
-
-export const MESSAGES = Object.fromEntries(Object.entries(schema.messages).map(([name, def]) => [name, name]));

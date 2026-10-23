@@ -80,6 +80,18 @@ const result = await compare.compareToSelf(packetFromAnotherDevice);
 await compare.stopMicAudio(); // optional; dispose() also stops it
 ```
 
+`waitForLocalPacket(timestamp)` is the asynchronous counterpart for request
+handlers that may run before the first microphone window is complete. It waits
+until a prepared packet is available, including when `prepareOnPacket` is
+`false`:
+
+```js
+const localPacket = await compare.waitForLocalPacket(packetFromAnotherDevice.timestamp);
+const result = await compare.compare(localPacket, packetFromAnotherDevice);
+```
+
+It rejects if microphone capture is stopped before a packet is ready.
+
 For request-driven applications, set `prepareOnPacket: false`. Capture still
 continues locally, but no worker/WASM packet preparation occurs until the
 caller asks for one. Call `prepareMicPacket()` when a comparison is requested:

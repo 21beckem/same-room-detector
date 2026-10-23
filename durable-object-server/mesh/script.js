@@ -20,11 +20,16 @@ runBtn.addEventListener('click', () => {
 
 
 const link = new ProtocolClient(WebSocketServerUri);
-await link.ready;
+try {
+    await link.ready;
+} catch (err) {
+    console.error('Failed to connect to server:', err);
+    alert('Failed to connect to server. See console for details.');
+}
+const analyzer = await AudioCompare.fromObject({});
 link.handle('audioRequest', async (msg, ctx) => {
     console.log('Received audio request from server:', msg);
-    await new Promise(r=>setTimeout(r,100));
-    const packet = analyzer.getLocalPacket();
+    const packet = await analyzer.waitForLocalPacket();
     return { fields: { ts: packet.timestamp }, payload: packet.buffer };
 });
 link.on('colocation', (msg, ctx) => {
@@ -32,17 +37,16 @@ link.on('colocation', (msg, ctx) => {
     console.log(`Received colocation score from server: ${score} with peer ${peer}`);
     runBtn.disabled = false;
 });
+link.on('tsUpdate', (msg, ctx) => {
+    const { ts } = msg.fields;
+    analyzer.currentTimestampMs = ts;
+});
 
 function debug(...a) { if (true) console.log(...a); }
 
-document.getElementById('start-recording-btn').addEventListener('click', () => {
-    document.getElementById('start-recording-btn').disabled = true;
-    main();
+const startRecordingBtn = document.getElementById('start-recording-btn');
+startRecordingBtn.addEventListener('click', () => {
+    startRecordingBtn.disabled = true;
+    analyzer.pipeMicAudio();
+    keepAlive.enable();
 });
-
-let analyzer;
-async function main() {
-    analyzer = await AudioCompare.fromObject({});
-    await analyzer.pipeMicAudio();
-    window.analyzer = analyzer;
-}
