@@ -126,6 +126,86 @@ microphone, releases the worker, and clears all pending work.
 `lags`, `quality`, `seconds`, `pairMs`, `deviceMs`, and `totalMs`. Snake-case
 aliases are also provided for compatibility with the original demos.
 
+## Microphone diagnostics page
+
+The temporary diagnostics page at `/exports/compare/diagnostics.html` records
+actual microphone settings, Web Audio context timing, worklet frame sequence
+continuity, main-thread delivery intervals, audio/wall-clock timing divergence,
+preparation timing, playback lifecycle, long tasks, and event-loop lag. It
+downloads one JSON report per run. Use capture-only mode first, keep the tab in
+the foreground, and avoid the playback button during that baseline run.
+
+The capture configuration selector provides five experiments:
+
+| ID | Web Audio rate | Capture output |
+| --- | --- | --- |
+| A / baseline | 16 kHz | Physical output, muted |
+| B / silent | 16 kHz | Silent sink (`setSinkId({type: "none"})`) |
+| C / device | Device-preferred rate | Physical output, muted |
+| D / device-silent | Device-preferred rate | Silent sink |
+| E / input-only | 16 kHz | Zero-output worklet, no destination connection; normal sink |
+
+E is now selected by default on the diagnostics page. Test it for 60 seconds
+with Interactive latency and Capture only in Edge, then Chrome. If audio time
+keeps pace past the original 30-second transition, repeat for 120 seconds and
+exercise preparation/playback. E passes `captureGraph: "input-only"` to
+`pipeMicAudio()`: the source connects to a worklet with one input and zero
+outputs, without a gain node or destination connection. The processor keeps
+returning `true` to stay active. The normal context sink and original 16 kHz
+sample path are retained to isolate topology. Diagnostics record
+`captureGraph`, actual `workletInputs`/`workletOutputs`, and
+`connectedToDestination`. The API default is now `"input-only"`; A–D explicitly
+select `"muted-output"` so the original experiments remain reproducible.
+
+Use Interactive latency for the first E test. Chromium's Playback latency
+profile may still permit the silence-processing fallback even with an
+automatically pulled worklet.
+
+Run A through D for 60 seconds each with Interactive latency in both browsers.
+Then repeat an individual configuration with Balanced, Playback, or 100 ms
+latency. Keep the mode and latency unchanged while comparing configurations.
+Capture + automatic preparation and Prepare & play remain available for each
+configuration. A silent sink affects capture only; diagnostic playback uses
+the existing separate 16 kHz playback context and is still audible.
+
+Device-rate capture uses a continuous Blackman-windowed sinc resampler in the
+AudioWorklet. It retains filter history and fractional phase across callbacks,
+applies an anti-alias filter, and emits the same 2048-frame mono 16 kHz chunks
+used by the original pipeline. Filter lookahead is approximately 2 ms for
+48 kHz and 44.1 kHz input. The first-channel policy is kept across all variants
+to isolate rate and output routing. There is no change to the model/WASM input
+contract or the 16 kHz model sample rate.
+
+The opt-in API options behind these experiments are `contextRate: "device"`
+(default `"model"`), `outputSink: "none"` (default `"default"`), and
+`audioContextOptions: {latencyHint: "balanced"}`. Device rate omits the context
+sample-rate request; it does not assume that input and output devices share
+the same native rate. The actual context rate and resampler lookahead are
+recorded. Silent-sink requests fail explicitly if unsupported or not applied;
+the page retains a downloadable failure report instead of substituting another
+configuration.
+
+Version 2 reports include the selected configuration, requested/actual rates,
+full browser versions when available, context/track state events, and a
+`timingHistory` sample approximately once per second plus the final sample.
+Samples include elapsed audio/context time, wall time, their deficit, and the
+audio-to-wall progress ratio since the preceding sample. No raw audio is
+included. Runs do not automatically restart a slow context, so the onset and
+extent of the failure remain visible. The historical `queueAgeMs` fields are
+retained for old-report comparisons, with `timingDivergenceMs` as the accurate
+name: these values do not establish that old audio is sitting in a queue.
+
+Run the deterministic resampler and worklet tests from the repository root:
+
+```powershell
+node --experimental-default-type=module --test exports/compare/mic-capture-worklet.test.mjs
+```
+
+Pass `diagnostics: true` to `pipeMicAudio()` to enable the worklet frame
+metadata and use `getMicDiagnostics()` to read a JSON-safe live snapshot. The
+default remains unchanged and continues to send raw `ArrayBuffer` chunks
+without diagnostic metadata.
+
 For browser diagnostics, `compare.drawPacket(canvas, summary, packet)` draws
 the packet's compact mel payload as a heatmap and writes packet metadata into
 the supplied summary element. It only reads the packet bytes already returned

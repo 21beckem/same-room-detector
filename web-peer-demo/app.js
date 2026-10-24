@@ -315,7 +315,7 @@ async function requestScore() {
   }
 }
 
-// setInterval(() => requestScore(), 1000);
+setInterval(() => requestScore(), 1000);
 
 function renderResult(result) {
   lastResult = result;

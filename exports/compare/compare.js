@@ -10,6 +10,55 @@ const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_MIC_HISTORY_SECONDS = 30;
 const DEFAULT_MIC_PACKET_INTERVAL_MS = 250;
 const MIC_CAPTURE_STALL_MS = 1500;
+const MIC_WORKLET_CHUNK_FRAMES = 2048;
+const MIC_DIAGNOSTIC_SERIES_LIMIT = 4096;
+
+function summarizeSeries(values) {
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length) return { count: 0, min: null, max: null, mean: null, p50: null, p95: null, p99: null };
+  const sorted = [...finite].sort((a, b) => a - b);
+  const percentile = (amount) => sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * amount))];
+  return {
+    count: finite.length,
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+    mean: finite.reduce((sum, value) => sum + value, 0) / finite.length,
+    p50: percentile(0.5),
+    p95: percentile(0.95),
+    p99: percentile(0.99),
+  };
+}
+
+function appendDiagnosticValue(values, value) {
+  if (!Number.isFinite(value)) return;
+  values.push(value);
+  if (values.length > MIC_DIAGNOSTIC_SERIES_LIMIT) values.shift();
+}
+
+function publicTrackSettings(track) {
+  const settings = track?.getSettings?.() || {};
+  const { deviceId, groupId, ...safeSettings } = settings;
+  return safeSettings;
+}
+
+function contextSnapshot(context) {
+  let outputTimestamp = null;
+  try {
+    outputTimestamp = context.getOutputTimestamp?.() || null;
+  } catch {
+    outputTimestamp = null;
+  }
+  return {
+    sampleRate: context.sampleRate,
+    state: context.state,
+    currentTime: context.currentTime,
+    renderQuantumSize: context.renderQuantumSize ?? null,
+    baseLatency: context.baseLatency ?? null,
+    outputLatency: context.outputLatency ?? null,
+    outputTimestamp,
+    sink: typeof context.sinkId === "string" ? context.sinkId : context.sinkId?.type ?? null,
+  };
+}
 
 function resolveResourceUrl(value) {
   const base = typeof location === "undefined" ? import.meta.url : location.href;
@@ -76,8 +125,11 @@ function latestSamples(chunks, totalSamples, sampleCount) {
 }
 
 let playingSamplesSource = null;
-function playSamples(samples, sampleRate = DEFAULT_SAMPLE_RATE) {
-  if (playingSamplesSource) return;
+function playSamples(samples, sampleRate = DEFAULT_SAMPLE_RATE, lifecycle = null) {
+  if (playingSamplesSource) {
+    lifecycle?.busy?.();
+    return null;
+  }
 
   const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
   if (!AudioContextClass) throw new Error("Playing samples requires Web Audio support.");
@@ -86,7 +138,10 @@ function playSamples(samples, sampleRate = DEFAULT_SAMPLE_RATE) {
   }
 
   const values = Float32Array.from(samples);
-  if (!values.length) return null;
+  if (!values.length) {
+    lifecycle?.empty?.();
+    return null;
+  }
   if (!playSamples.context || playSamples.context.state === "closed") {
     playSamples.context = new AudioContextClass({ sampleRate });
   }
@@ -100,10 +155,20 @@ function playSamples(samples, sampleRate = DEFAULT_SAMPLE_RATE) {
   playingSamplesSource.onended = () => {
     playingSamplesSource.disconnect();
     playingSamplesSource = null;
+    lifecycle?.ended?.({
+      bufferSampleRate: sampleRate,
+      contextSampleRate: context.sampleRate,
+      frames: values.length,
+    });
   };
 
   const start = () => {
     playingSamplesSource.start();
+    lifecycle?.started?.({
+      bufferSampleRate: sampleRate,
+      contextSampleRate: context.sampleRate,
+      frames: values.length,
+    });
     return playingSamplesSource;
   };
   return context.state === "suspended" ? context.resume().then(start) : start();
@@ -254,12 +319,14 @@ export class AudioCompare {
     bitDepth = 8,
     quantize = true,
     currentTimestampMs,
+    playbackOnCompare = false,
   } = {}) {
     this.modelUrl = resolveResourceUrl(modelUrl);
     this.wasmUrl = resolveResourceUrl(wasmUrl);
     this.defaultPrepareOptions = { bitDepth, quantize };
     this.timestampOffsetMs = 0;
     if (currentTimestampMs !== undefined) this.currentTimestampMs = currentTimestampMs;
+    this.playbackOnCompare = Boolean(playbackOnCompare);
     this.worker = new Worker(workerUrl, { type: "module", name: "AudioCompare" });
     this.nextId = 1;
     this.pending = new Map();
@@ -268,6 +335,7 @@ export class AudioCompare {
     this.model = null;
     this.loadPromise = null;
     this.micState = null;
+    this.lastMicDiagnostics = null;
     this.worker.onmessage = (event) => this.#handleMessage(event.data);
     this.worker.onerror = (event) => {
       const error = new Error(event.message || "AudioCompare worker failed");
@@ -373,6 +441,12 @@ export class AudioCompare {
     return comparison;
   }
 
+  /** Returns a JSON-safe snapshot of the active or most recently stopped mic run. */
+  getMicDiagnostics() {
+    if (this.micState?.diagnostics) return this.#snapshotMicDiagnostics(this.micState);
+    return this.lastMicDiagnostics ? structuredClone(this.lastMicDiagnostics) : null;
+  }
+
   /** Draws a compact packet's mel payload for diagnostics without exposing audio. */
   drawPacket(canvas, summary, packet) {
     renderPacket(canvas, summary, packet);
@@ -391,7 +465,11 @@ export class AudioCompare {
     sampleRate = DEFAULT_SAMPLE_RATE,
     constraints = {},
     audioContextOptions = {},
+    contextRate = "model",
+    outputSink = "default",
+    captureGraph = "input-only",
     workletUrl = new URL("./mic-capture-worklet.js", import.meta.url),
+    diagnostics = false,
     onPacket,
     onError,
   } = {}) {
@@ -408,8 +486,14 @@ export class AudioCompare {
     if (sampleRate !== DEFAULT_SAMPLE_RATE) {
       throw new RangeError(`AudioCompare currently supports microphone capture at ${DEFAULT_SAMPLE_RATE} Hz.`);
     }
+    if (!["model", "device"].includes(contextRate)) throw new RangeError("contextRate must be model or device.");
+    if (!["default", "none"].includes(outputSink)) throw new RangeError("outputSink must be default or none.");
+    if (!["muted-output", "input-only"].includes(captureGraph)) {
+      throw new RangeError("captureGraph must be muted-output or input-only.");
+    }
 
     await this.stopMicAudio();
+    this.lastMicDiagnostics = null;
 
     const requestedAudio = {
       channelCount: { ideal: 1 },
@@ -427,20 +511,44 @@ export class AudioCompare {
     let silentGain;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: requestedAudio, video: false });
+      const track = stream.getAudioTracks()[0] || null;
       const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
       if (!AudioContextClass) throw new Error("AudioCompare microphone capture requires Web Audio support.");
-      context = new AudioContextClass({ sampleRate, latencyHint: "interactive", ...audioContextOptions });
-      if (context.sampleRate !== sampleRate) {
+      const contextOptions = { latencyHint: "interactive", ...audioContextOptions };
+      if (contextRate === "model") contextOptions.sampleRate ??= sampleRate;
+      else delete contextOptions.sampleRate;
+      context = new AudioContextClass(contextOptions);
+      if (contextRate === "model" && context.sampleRate !== sampleRate) {
         throw new Error(`The browser created a ${context.sampleRate} Hz audio context; ${sampleRate} Hz is required.`);
+      }
+      if (outputSink === "none") {
+        if (typeof context.setSinkId !== "function") {
+          throw new Error("This browser does not expose AudioContext.setSinkId(); the silent-sink experiment cannot run.");
+        }
+        await context.setSinkId({ type: "none" });
+        if (context.sinkId?.type !== "none") {
+          throw new Error("The browser did not select a silent audio sink; this experiment was stopped.");
+        }
       }
       await context.audioWorklet.addModule(resolveResourceUrl(workletUrl));
       await context.resume();
 
       source = context.createMediaStreamSource(stream);
-      captureNode = new AudioWorkletNode(context, "audio-compare-capture");
-      silentGain = context.createGain();
-      silentGain.gain.value = 0;
-      source.connect(captureNode).connect(silentGain).connect(context.destination);
+      const diagnosticsEnabled = Boolean(diagnostics);
+      captureNode = new AudioWorkletNode(context, "audio-compare-capture", {
+        numberOfInputs: 1,
+        numberOfOutputs: captureGraph === "input-only" ? 0 : 1,
+        processorOptions: { diagnostics: diagnosticsEnabled, outputSampleRate: sampleRate },
+      });
+      source.connect(captureNode);
+      // An input-only worklet is automatically pulled by the browser. Do not
+      // attach its graph to the destination through permanently silent output:
+      // that topology can enter the browser's silence-processing fallback.
+      if (captureGraph === "muted-output") {
+        silentGain = context.createGain();
+        silentGain.gain.value = 0;
+        captureNode.connect(silentGain).connect(context.destination);
+      }
 
       const state = {
         stream,
@@ -448,6 +556,7 @@ export class AudioCompare {
         source,
         captureNode,
         silentGain,
+        diagnosticListeners: [],
         sampleRate,
         historySeconds,
         packetIntervalMs,
@@ -461,16 +570,126 @@ export class AudioCompare {
         preparePromise: null,
         packetWaiters: [],
         lastCaptureAt: 0,
+        diagnostics: diagnosticsEnabled ? {
+          schema: "same-room-audiocompare-diagnostics/v2",
+          startedAt: new Date().toISOString(),
+          startedAtMs: Date.now(),
+          startedPerfMs: performance.now(),
+          startedContextTime: context.currentTime,
+          configuration: {
+            contextRate,
+            outputSink,
+            captureGraph,
+            workletInputs: captureNode.numberOfInputs,
+            workletOutputs: captureNode.numberOfOutputs,
+            connectedToDestination: captureGraph === "muted-output",
+            requestedContextOptions: contextOptions,
+            contextSampleRate: context.sampleRate,
+            modelSampleRate: sampleRate,
+            resampler: context.sampleRate === sampleRate ? "bypass" : "streaming-windowed-sinc",
+            resamplerLookaheadMs: context.sampleRate === sampleRate ? 0
+              : Math.ceil(32 * Math.max(1, context.sampleRate / sampleRate)) / context.sampleRate * 1000,
+            channelPolicy: "first input channel (same as baseline)",
+            setSinkIdSupported: typeof context.setSinkId === "function",
+          },
+          events: [],
+          environment: {
+            userAgent: globalThis.navigator?.userAgent || null,
+            platform: globalThis.navigator?.platform || null,
+            language: globalThis.navigator?.language || null,
+            hardwareConcurrency: globalThis.navigator?.hardwareConcurrency ?? null,
+            devicePixelRatio: globalThis.devicePixelRatio ?? null,
+            crossOriginIsolated: globalThis.crossOriginIsolated ?? null,
+          },
+          requestedAudio,
+          track: {
+            label: track?.label || null,
+            settings: publicTrackSettings(track),
+            constraints: track?.getConstraints?.() || null,
+          },
+          context: contextSnapshot(context),
+          worklet: {
+            chunkFrames: MIC_WORKLET_CHUNK_FRAMES,
+            messages: 0,
+            framesReceived: 0,
+            sequenceGaps: 0,
+            frameSizeMismatches: 0,
+            firstFrameEnd: null,
+            lastFrameEnd: null,
+            lastSequence: null,
+            firstArrivalPerfMs: null,
+            lastArrivalPerfMs: null,
+            intervalsMs: [],
+            audioIntervalsMs: [],
+            queueAgeMs: [],
+            maxQueueAgeMs: null,
+            inputFramesProcessed: 0,
+            renderFrameEnd: null,
+            latestTimingDivergenceMs: null,
+          },
+          preparation: {
+            requested: 0,
+            completed: 0,
+            failed: 0,
+            inFlight: 0,
+            maxInFlight: 0,
+            durationsMs: [],
+          },
+          playback: {
+            started: 0,
+            ended: 0,
+            busy: 0,
+            empty: 0,
+            active: 0,
+            lastStart: null,
+            lastEnd: null,
+          },
+          errors: [],
+        } : null,
         onPacket,
         onError,
       };
       this.micState = state;
+      const listen = (target, type, callback) => {
+        target.addEventListener(type, callback);
+        state.diagnosticListeners.push(() => target.removeEventListener(type, callback));
+      };
+      const recordEvent = (type) => {
+        if (!state.diagnostics) return;
+        state.diagnostics.events.push({
+          type,
+          elapsedMs: performance.now() - state.diagnostics.startedPerfMs,
+          contextTime: context.currentTime,
+          contextState: context.state,
+          trackMuted: track?.muted ?? null,
+          trackState: track?.readyState ?? null,
+        });
+      };
+      if (diagnosticsEnabled) {
+        listen(context, "statechange", () => recordEvent("context-statechange"));
+        for (const eventName of ["mute", "unmute", "ended"]) {
+          if (track) listen(track, eventName, () => recordEvent(`track-${eventName}`));
+        }
+        recordEvent("capture-started");
+      }
+      listen(captureNode, "processorerror", () => {
+        const error = new Error("The microphone AudioWorklet processor failed.");
+        state.diagnostics?.errors.push({ at: new Date().toISOString(), phase: "worklet", message: error.message });
+        recordEvent("processorerror");
+        state.onError?.(error);
+      });
       captureNode.port.onmessage = (event) => {
         if (this.micState !== state) return;
-        const payload = event.data || {};
-        const samples = payload.samples instanceof Float32Array
-          ? payload.samples
-          : new Float32Array(payload.samples || payload);
+        const receivedAt = performance.now();
+        const payload = event.data;
+        let samples;
+        if (payload instanceof Float32Array) samples = payload;
+        else if (payload instanceof ArrayBuffer) samples = new Float32Array(payload);
+        else if (payload?.samples instanceof Float32Array) samples = payload.samples;
+        else if (payload?.samples instanceof ArrayBuffer) samples = new Float32Array(payload.samples);
+        else if (payload?.buffer instanceof ArrayBuffer) samples = new Float32Array(payload.buffer);
+        else samples = new Float32Array(payload || []);
+        this.#recordMicChunk(state, payload, samples.length, receivedAt);
         state.lastCaptureAt = nowMilliseconds();
         this.#consumeMicChunk(state, samples);
       };
@@ -483,6 +702,159 @@ export class AudioCompare {
       await context?.close?.();
       throw error;
     }
+  }
+
+  #recordMicChunk(state, payload, sampleCount, receivedAt) {
+    const diagnostics = state.diagnostics;
+    if (!diagnostics) return;
+    const worklet = diagnostics.worklet;
+    worklet.messages += 1;
+    worklet.framesReceived += sampleCount;
+    if (worklet.firstArrivalPerfMs === null) worklet.firstArrivalPerfMs = receivedAt;
+    if (worklet.lastArrivalPerfMs !== null) {
+      appendDiagnosticValue(worklet.intervalsMs, receivedAt - worklet.lastArrivalPerfMs);
+    }
+    worklet.lastArrivalPerfMs = receivedAt;
+
+    const hasMetadata = payload && typeof payload === "object"
+      && !(payload instanceof ArrayBuffer)
+      && !(payload instanceof Float32Array)
+      && Number.isFinite(payload.sequence)
+      && Number.isFinite(payload.frameStart)
+      && Number.isFinite(payload.frameEnd);
+    if (!hasMetadata) return;
+
+    const frameCount = payload.frameEnd - payload.frameStart;
+    if (frameCount !== sampleCount) worklet.frameSizeMismatches += 1;
+    if (worklet.lastSequence !== null && payload.sequence !== worklet.lastSequence + 1) {
+      worklet.sequenceGaps += Math.max(0, payload.sequence - worklet.lastSequence - 1);
+    }
+    if (worklet.lastFrameEnd !== null) {
+      appendDiagnosticValue(worklet.audioIntervalsMs, (payload.frameEnd - worklet.lastFrameEnd) / state.sampleRate * 1000);
+    }
+    if (worklet.firstFrameEnd === null) worklet.firstFrameEnd = payload.frameEnd;
+    const audioElapsedMs = (payload.frameEnd - worklet.firstFrameEnd) / state.sampleRate * 1000;
+    const wallElapsedMs = receivedAt - worklet.firstArrivalPerfMs;
+    const queueAgeMs = wallElapsedMs - audioElapsedMs;
+    worklet.latestTimingDivergenceMs = queueAgeMs;
+    worklet.inputFramesProcessed = payload.inputFramesProcessed ?? 0;
+    worklet.renderFrameEnd = payload.renderFrameEnd ?? null;
+    appendDiagnosticValue(worklet.queueAgeMs, queueAgeMs);
+    worklet.maxQueueAgeMs = worklet.maxQueueAgeMs === null
+      ? queueAgeMs
+      : Math.max(worklet.maxQueueAgeMs, queueAgeMs);
+    worklet.lastSequence = payload.sequence;
+    worklet.lastFrameEnd = payload.frameEnd;
+  }
+
+  #recordMicPrepareStart(state) {
+    const preparation = state.diagnostics?.preparation;
+    if (!preparation) return;
+    preparation.requested += 1;
+    preparation.inFlight += 1;
+    preparation.maxInFlight = Math.max(preparation.maxInFlight, preparation.inFlight);
+  }
+
+  #recordMicPrepareEnd(state, startedAt, succeeded) {
+    const preparation = state.diagnostics?.preparation;
+    if (!preparation) return;
+    preparation.inFlight = Math.max(0, preparation.inFlight - 1);
+    if (succeeded) preparation.completed += 1;
+    else preparation.failed += 1;
+    appendDiagnosticValue(preparation.durationsMs, performance.now() - startedAt);
+  }
+
+  #recordMicPlayback(state, type, details = {}) {
+    const playback = state.diagnostics?.playback;
+    if (!playback) return;
+    if (type === "started") {
+      playback.started += 1;
+      playback.active += 1;
+      playback.lastStart = { atPerfMs: performance.now(), ...details };
+    } else if (type === "ended") {
+      playback.ended += 1;
+      playback.active = Math.max(0, playback.active - 1);
+      playback.lastEnd = { atPerfMs: performance.now(), ...details };
+    } else if (type === "busy") {
+      playback.busy += 1;
+    } else if (type === "empty") {
+      playback.empty += 1;
+    }
+  }
+
+  #snapshotMicDiagnostics(state) {
+    const diagnostics = state.diagnostics;
+    const worklet = diagnostics.worklet;
+    const preparation = diagnostics.preparation;
+    const now = performance.now();
+    const track = state.stream.getAudioTracks()[0];
+    const contextElapsedSeconds = state.context.currentTime - diagnostics.startedContextTime;
+    return {
+      schema: diagnostics.schema,
+      startedAt: diagnostics.startedAt,
+      startedAtMs: diagnostics.startedAtMs,
+      durationMs: now - diagnostics.startedPerfMs,
+      environment: diagnostics.environment,
+      configuration: diagnostics.configuration,
+      events: diagnostics.events.map((event) => ({ ...event })),
+      timing: {
+        wallElapsedMs: now - diagnostics.startedPerfMs,
+        contextStartSeconds: diagnostics.startedContextTime,
+        contextElapsedSeconds,
+        audioClockDeficitMs: now - diagnostics.startedPerfMs - contextElapsedSeconds * 1000,
+        receivedAudioSeconds: worklet.framesReceived / state.sampleRate,
+        inputAudioSeconds: worklet.inputFramesProcessed / state.context.sampleRate,
+        firstMessageAfterMs: worklet.firstArrivalPerfMs === null ? null
+          : worklet.firstArrivalPerfMs - diagnostics.startedPerfMs,
+        latestTimingDivergenceMs: worklet.latestTimingDivergenceMs,
+        trackMuted: track?.muted ?? null,
+        trackState: track?.readyState ?? null,
+      },
+      requestedAudio: diagnostics.requestedAudio,
+      track: diagnostics.track,
+      context: contextSnapshot(state.context),
+      capture: {
+        sampleRate: state.sampleRate,
+        analysisSamples: state.analysisSamples,
+        historySeconds: state.historySeconds,
+        packetIntervalMs: state.packetIntervalMs,
+        prepareOnPacket: state.prepareOnPacket,
+        rawSampleCount: state.rawSampleCount,
+        rawChunkCount: state.rawChunks.length,
+        captureAgeMs: state.lastCaptureAt ? nowMilliseconds() - state.lastCaptureAt : null,
+      },
+      worklet: {
+        chunkFrames: worklet.chunkFrames,
+        messages: worklet.messages,
+        framesReceived: worklet.framesReceived,
+        inputFramesProcessed: worklet.inputFramesProcessed,
+        inputSampleRate: state.context.sampleRate,
+        outputSampleRate: state.sampleRate,
+        renderFrameEnd: worklet.renderFrameEnd,
+        sequenceGaps: worklet.sequenceGaps,
+        frameSizeMismatches: worklet.frameSizeMismatches,
+        firstFrameEnd: worklet.firstFrameEnd,
+        lastFrameEnd: worklet.lastFrameEnd,
+        intervalsMs: summarizeSeries(worklet.intervalsMs),
+        audioIntervalsMs: summarizeSeries(worklet.audioIntervalsMs),
+        queueAgeMs: summarizeSeries(worklet.queueAgeMs),
+        // Historical queueAgeMs fields are kept for comparing the first reports.
+        // This measures clock/delivery divergence, not actual queued audio age.
+        timingDivergenceMs: summarizeSeries(worklet.queueAgeMs),
+        maxQueueAgeMs: worklet.maxQueueAgeMs,
+      },
+      preparation: {
+        requested: preparation.requested,
+        completed: preparation.completed,
+        failed: preparation.failed,
+        inFlight: preparation.inFlight,
+        maxInFlight: preparation.maxInFlight,
+        durationsMs: summarizeSeries(preparation.durationsMs),
+      },
+      playback: diagnostics.playback,
+      errors: diagnostics.errors,
+      packetHistory: state.packetHistory.map((packet) => ({ timestamp: packet.timestamp, bytes: packet.buffer.byteLength })),
+    };
   }
 
   #consumeMicChunk(state, samples) {
@@ -513,19 +885,26 @@ export class AudioCompare {
     ) return;
 
     const audio = latestSamples(state.rawChunks, state.rawSampleCount, state.analysisSamples);
+    const prepareStarted = performance.now();
+    let prepareSucceeded = false;
+    this.#recordMicPrepareStart(state);
     state.prepareInFlight = true;
-    this.prepare(audio, { timestamp })
+    state.preparePromise = this.prepare(audio, { timestamp })
       .then((packet) => {
-        if (this.micState !== state) return;
+        prepareSucceeded = true;
+        if (this.micState !== state) return packet;
         this.#storeMicPacket(state, packet);
+        return copyPacket(packet);
       })
       .catch((error) => {
+        state.diagnostics?.errors.push({ at: new Date().toISOString(), phase: "prepare", message: String(error?.message || error) });
         if (this.micState === state) {
           state.onError?.(error);
           for (const waiter of state.packetWaiters.splice(0)) waiter.reject(error);
         }
       })
       .finally(() => {
+        this.#recordMicPrepareEnd(state, prepareStarted, prepareSucceeded);
         state.prepareInFlight = false;
         this.#prepareWaitingMicPacket(state);
       });
@@ -586,17 +965,34 @@ export class AudioCompare {
       return state.preparePromise;
     }
     const audio = latestSamples(state.rawChunks, state.rawSampleCount, state.analysisSamples);
-    playSamples(audio, state.sampleRate);
+    const playbackLifecycle = state.diagnostics ? {
+      started: (details) => this.#recordMicPlayback(state, "started", details),
+      ended: (details) => this.#recordMicPlayback(state, "ended", details),
+      busy: () => this.#recordMicPlayback(state, "busy"),
+      empty: () => this.#recordMicPlayback(state, "empty"),
+    } : null;
+    if (this.playbackOnCompare) {
+      playSamples(audio, state.sampleRate, playbackLifecycle);
+    }
+    const prepareStarted = performance.now();
+    let prepareSucceeded = false;
+    this.#recordMicPrepareStart(state);
     state.prepareInFlight = true;
     const packetPromise = this.prepare(audio, {
       timestamp: Number.isFinite(timestamp) ? timestamp : this.currentTimestampMs,
     })
       .then((packet) => {
+        prepareSucceeded = true;
         if (this.micState !== state) return packet;
         this.#storeMicPacket(state, packet);
         return copyPacket(packet);
       })
+      .catch((error) => {
+        state.diagnostics?.errors.push({ at: new Date().toISOString(), phase: "prepare", message: String(error?.message || error) });
+        throw error;
+      })
       .finally(() => {
+        this.#recordMicPrepareEnd(state, prepareStarted, prepareSucceeded);
         state.prepareInFlight = false;
       });
     state.preparePromise = packetPromise;
@@ -656,6 +1052,8 @@ export class AudioCompare {
   async stopMicAudio() {
     const state = this.micState;
     if (!state) return;
+    if (state.diagnostics) this.lastMicDiagnostics = this.#snapshotMicDiagnostics(state);
+    for (const removeListener of state.diagnosticListeners) removeListener();
     this.micState = null;
     for (const waiter of state.packetWaiters) {
       waiter.reject(new Error("Microphone capture stopped before a packet was ready."));
@@ -664,7 +1062,7 @@ export class AudioCompare {
     state.captureNode.port.onmessage = null;
     state.captureNode.disconnect();
     state.source.disconnect();
-    state.silentGain.disconnect();
+    state.silentGain?.disconnect();
     for (const track of state.stream.getTracks()) track.stop();
     await state.context.close();
   }
