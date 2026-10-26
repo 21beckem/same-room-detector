@@ -15,6 +15,43 @@ export class WebSocketServer extends DurableObject {
 		this.link.on('socket:open', ({ ws, uid }) => {
 			const { ip } = this.link.getAttachment(ws);
 			console.log(`Client ${uid} connected from IP ${ip}`);
+
+			setTimeout(async () => {
+				const startMs = performance.now();
+				const res = await this.link.request(ws, 'getLocation', {}, { timeout: 10_000 });
+				const endMs = performance.now();
+				console.log(`Client ${uid} location request took ${endMs - startMs} ms`);
+				this.link.updateAttachment(ws, { lat: res.fields.lat, lng: res.fields.lng });
+			}, 500);
+		});
+
+		this.link.handle('getNearbyPeers', async (msg, ctx) => {
+			const { options } = msg.fields;
+			const except = new Set(options?.except || []);
+			const { lat, lng } = this.link.getAttachment(ctx.ws);
+			if (lat === undefined || lng === undefined) {
+				console.log(`Client ${ctx.uid} has no location data. Cannot find nearby peers.`);
+				return { fields: { peers: [] } };
+			}
+			function calculateDistance(otherAttachment) {
+				const oLat = otherAttachment.lat;
+				const oLng = otherAttachment.lng;
+				if (oLat === undefined || oLng === undefined) return Infinity;
+				
+				return Math.sqrt(Math.pow(lat - oLat, 2) + Math.pow(lng - oLng, 2));
+			}
+			const nearbyPeers = [];
+			// TODO: Implement logic to find nearby peers based on location and options
+			for (const socket of this.link.sockets) {
+				if (socket.ws === ctx.ws) continue; // Skip self
+				if (except.has(socket.uid)) continue;
+				const distance = calculateDistance(this.link.getAttachment(socket.ws));
+				if (distance < 0.01) { // Example threshold for "nearby"
+					console.log(`Client ${ctx.uid} is near client ${socket.uid} (distance: ${distance})`);
+					nearbyPeers.push(socket.uid);
+				}
+			}
+			return { fields: { peers: nearbyPeers } };
 		});
 
 		this.link.on('trigger', async (msg, ctx) => {

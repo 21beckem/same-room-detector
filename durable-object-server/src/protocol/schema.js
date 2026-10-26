@@ -53,6 +53,14 @@ export const schema = {
     // timestamp update from server to client
     tsUpdate: { fields: { ts: 'ts' } },
 
+    // server -> client: get your current location, client responds with `location`
+    getLocation: { fields: {}, reply: 'location' },
+    location: { fields: { lat: 'f64', lng: 'f64' } },
+
+    // client -> server: get nearby peers, server responds with `nearbyPeers`
+    getNearbyPeers: { fields: { options: 'json' }, reply: 'nearbyPeers' },
+    nearbyPeers: { fields: { peers: 'json' } },
+
     // // client -> server: "I'm starting something"
     // begin:    { fields: { ts: 'ts', kind: 'u8' } },
 

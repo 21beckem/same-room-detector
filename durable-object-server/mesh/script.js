@@ -1,10 +1,11 @@
 import { AudioCompare } from '../../exports/compare/compare.js';
 import { ProtocolClient } from '../src/protocol/client.js';
+import { Geo } from './geo.js';
 const isHostedLocally = (/(localhost)|(\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)/gm).test(window.location.hostname);
 
 const debug = {
     log: (...a) => {
-        if (false) console.log(`[${debug._timestamp()}]`, ...a);
+        if (true) console.log(`[${debug._timestamp()}]`, ...a);
     },
     _timestamp: () => {
         const now = new Date();
@@ -28,7 +29,7 @@ const keepAlive = (() => {
         disable: () => { keepAwake.disable(); window.removeEventListener('beforeunload', handleBeforeUnload); },
     };
 })();
-const WebSocketServerUri = isHostedLocally ? `ws://${location.hostname}:8787` : 'wss://durable-object-server.21beckem8.workers.dev';
+const WebSocketServerUri = isHostedLocally ? `ws://${location.hostname}:8787` : 'wss://colocation.beckersuite.com';
 
 const runBtn = document.getElementById('run-btn');
 runBtn.addEventListener('click', () => {
@@ -37,7 +38,7 @@ runBtn.addEventListener('click', () => {
     debug.status('Triggering colocation...');
 });
 
-
+Geo.getLocation();
 const link = new ProtocolClient(WebSocketServerUri);
 window.link = link; // for debugging in console
 try {
@@ -66,6 +67,28 @@ link.on('colocation', (msg, ctx) => {
 link.on('tsUpdate', (msg, ctx) => {
     analyzer.currentTimestampMs = msg.fields.ts;
 });
+link.handle('getLocation', async (msg, ctx) => {
+    const { lat, lng } = await Geo.getLocation();
+    debug.log(`Received getLocation request from server. Responding with lat: ${lat}, lng: ${lng}`);
+    return { fields: { lat, lng } };
+});
+
+const nearbyPeers = new Set();
+async function getNearbyPeers() {
+    const res = await link.request('getNearbyPeers', { options: { except: [...nearbyPeers] } });
+    const peers = res.fields.peers;
+    debug.log('Received nearby peers from server:', peers);
+    nearbyPeers.clear();
+    for (const peer of peers) {
+        nearbyPeers.add(peer);
+    }
+    setTimeout(getNearbyPeers, 10_000); // Poll every 10 seconds
+}
+setTimeout(getNearbyPeers, 10);
+
+
+
+// relay handling examples
 link.handle('relay', ({ from, payload, meta, size }) => {
     debug.log(`Received relay from ${from} with size ${size} and meta:`, meta);
     const blob = new Blob([payload], { type: meta?.type });
