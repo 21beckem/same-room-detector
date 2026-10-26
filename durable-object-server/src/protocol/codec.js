@@ -13,6 +13,10 @@ export const SYSTEM_MESSAGES = Object.freeze({
   //   base - server epoch (ms) that all `ts` fields on this connection are relative to
   //   now  - server clock (ms) at send time, used to estimate clock offset
   hello: { id: 255, fields: { uid: 'uid', base: 'f64', now: 'f64' } },
+
+  relayStart: { id: 254, fields: { peer: 'uid', xfer: 'u16', total: 'uvar', size: 'uvar', meta: 'json', isMsg: 'bool' }, reply: 'relayAck' },
+  relayChunk: { id: 253, fields: { peer: 'uid', xfer: 'u16', index: 'uvar', isMsg: 'bool' }, payload: true, reply: 'relayAck' },
+  relayAck:   { id: 252, fields: {} },
 });
 
 export class ProtocolError extends Error {

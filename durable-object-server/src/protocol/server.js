@@ -37,6 +37,19 @@ export class ProtocolServer extends Router {
     this.state = state;
     this.schema = schema;
     this._eps = new WeakMap(); // ws -> Endpoint (rebuilt lazily after hibernation)
+    
+    const maxRelay = schema.maxRelay ?? 104_857_600;
+    this.handlers.set('relayStart', async (msg, ctx) => {
+      const { peer, ...rest } = msg.fields;
+      if (rest.size > maxRelay) throw new Error(`Relay too large (max ${maxRelay} bytes)`);
+      await this.request(peer, 'relayStart', { ...rest, peer: ctx.uid }, { timeout: 30_000 });
+      return { fields: {} };
+    });
+    this.handlers.set('relayChunk', async (msg, ctx) => {
+      const { peer, ...rest } = msg.fields;
+      await this.request(peer, 'relayChunk', { ...rest, peer: ctx.uid }, { payload: msg.payload, timeout: 30_000 });
+      return { fields: {} };
+    });
   }
 
   // ----- connections ------------------------------------------------------

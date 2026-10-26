@@ -35,6 +35,8 @@
             <button id="start-recording-btn">Start Recording</button>
             <button id="run-btn" disabled>Run</button>
         </div>
+        <br>
+        <input type="file" id="file-input" onchange="window.file = this.files[0]; console.log('Selected file:', window.file.name, 'Access with window.file');">
     </center>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
