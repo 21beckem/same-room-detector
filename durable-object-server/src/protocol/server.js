@@ -120,6 +120,9 @@ export class ProtocolServer extends Router {
   get sockets() {
     return this.state.getWebSockets().map((ws) => ({ ws, uid: this._endpoint(ws).uid }));
   }
+  getSocket(uid) {
+    return this.sockets.find((s) => s.uid === uid)?.ws;
+  }
 
   has(uid) {
     return this.sockets.some((s) => s.uid === uid);

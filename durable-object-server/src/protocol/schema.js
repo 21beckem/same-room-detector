@@ -57,9 +57,8 @@ export const schema = {
     getLocation: { fields: {}, reply: 'location' },
     location: { fields: { lat: 'f64', lng: 'f64' } },
 
-    // client -> server: get nearby peers, server responds with `nearbyPeers`
-    getNearbyPeers: { fields: { options: 'json' }, reply: 'nearbyPeers' },
-    nearbyPeers: { fields: { peers: 'json' } },
+    // server -> client: add/remove nearby peer
+    togglePeer: { fields: { uid: 'uid', add: 'bool' } },
 
     // // client -> server: "I'm starting something"
     // begin:    { fields: { ts: 'ts', kind: 'u8' } },

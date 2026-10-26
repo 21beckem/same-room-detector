@@ -38,7 +38,13 @@ runBtn.addEventListener('click', () => {
     debug.status('Triggering colocation...');
 });
 
-Geo.getLocation();
+Geo.getLocation().then(({ lat, lng}) => {
+    debug.log('Current location:', { lat, lng });
+    link.send('location', { lat, lng });
+}).catch((err) => {
+    console.error('Failed to get location:', err);
+    debug.status('Failed to get location: ' + err.message);
+});
 const link = new ProtocolClient(WebSocketServerUri);
 window.link = link; // for debugging in console
 try {
@@ -67,24 +73,6 @@ link.on('colocation', (msg, ctx) => {
 link.on('tsUpdate', (msg, ctx) => {
     analyzer.currentTimestampMs = msg.fields.ts;
 });
-link.handle('getLocation', async (msg, ctx) => {
-    const { lat, lng } = await Geo.getLocation();
-    debug.log(`Received getLocation request from server. Responding with lat: ${lat}, lng: ${lng}`);
-    return { fields: { lat, lng } };
-});
-
-const nearbyPeers = new Set();
-async function getNearbyPeers() {
-    const res = await link.request('getNearbyPeers', { options: { except: [...nearbyPeers] } });
-    const peers = res.fields.peers;
-    debug.log('Received nearby peers from server:', peers);
-    nearbyPeers.clear();
-    for (const peer of peers) {
-        nearbyPeers.add(peer);
-    }
-    setTimeout(getNearbyPeers, 10_000); // Poll every 10 seconds
-}
-setTimeout(getNearbyPeers, 10);
 
 
 
