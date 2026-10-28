@@ -53,12 +53,14 @@ export const schema = {
     // timestamp update from server to client
     tsUpdate: { fields: { ts: 'ts' } },
 
-    // server -> client: get your current location, client responds with `location`
-    getLocation: { fields: {}, reply: 'location' },
-    location: { fields: { lat: 'f64', lng: 'f64' } },
+    // client -> server ready with its current location
+    ready: { fields: { lat: 'f64', lng: 'f64' }, reply: 'acknowledged' },
 
     // server -> client: add/remove nearby peer
-    togglePeer: { fields: { uid: 'uid', add: 'bool' } },
+    togglePeer: { fields: { uid: 'uid', add: 'bool', score: 'f32' } },
+
+    // basic response to any request to verify receipt
+    acknowledged: { fields: {} },
 
     // // client -> server: "I'm starting something"
     // begin:    { fields: { ts: 'ts', kind: 'u8' } },

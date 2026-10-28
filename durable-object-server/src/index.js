@@ -18,7 +18,7 @@ export class WebSocketServer extends DurableObject {
 
 		this.link.on('socket:open', ({ ws, uid }) => this._registerNewClient(ws, uid));
 
-		this.link.on('location', (msg, ctx) => {
+		this.link.handle('ready', (msg, ctx) => {
 			const { lat, lng } = msg.fields;
 			const gridKey = this._getGridKey(lat, lng);
 			if (!this.geoGrid.has(gridKey))
@@ -27,7 +27,7 @@ export class WebSocketServer extends DurableObject {
 
 			this.link.updateAttachment(ctx.ws, {
 				lat, lng, gridKey,
-				neighbors: [],
+				peers: [],
 				ready: true
 			});
 		});
@@ -64,6 +64,7 @@ export class WebSocketServer extends DurableObject {
 			ws: s.ws,
 			...this.link.getAttachment(s.ws),
 		}));
+		console.log(`Discovered ${attachments.length} attachments`);
 		const readyPeers = attachments.filter((p) => p.ready);
 		console.log(`Found ${readyPeers.length} ready peers for colocation discovery`);
 		if (readyPeers.length < 2) {
@@ -72,34 +73,56 @@ export class WebSocketServer extends DurableObject {
 		}
 
 		const testedPairs = new Set();
+		const beenTested = (uid1, uid2) => testedPairs.has([uid1, uid2].sort().join('-'));
+		const markTested = (uid1, uid2) => testedPairs.add([uid1, uid2].sort().join('-'));
+
+		const promises = [];
 
 		for (const peer of readyPeers) {
 			const possibleNeighbors = this._findPossibleNeighbors(peer.gridKey, readyPeers);
 			
-			const scores = await Promise.all(possibleNeighbors.map(async (other) => {
-				if (testedPairs.has([peer.uid, other.uid].sort().join('-'))) {
-					return { other, score: null };
+			promises.push(Promise.all(possibleNeighbors.map(async (other) => {
+				const { score } = await (async()=>{
+					if (peer.uid === other.uid) return { other, score: null };
+					if (beenTested(peer.uid, other.uid)) {
+						return { other, score: null };
+					}
+					console.log(`Comparing audio packets between:`, peer.uid, other.uid);
+					markTested(peer.uid, other.uid);
+					const score = await this._compare(
+						this.link.getSocket(peer.uid),
+						this.link.getSocket(other.uid)
+					);
+					return { other, score };
+				})();
+				
+				try {
+					if (score === null || score === undefined) return;
+					if (score < MIN_SCORE) {
+						if (peer.peers.includes(other.uid)) {
+							this.link.send(peer.ws, 'togglePeer', { score, uid: other.uid, add: false });
+							peer.peers = peer.peers.filter(uid => uid !== other.uid);
+						}
+						if (other.peers.includes(peer.uid)) {
+							this.link.send(other.ws, 'togglePeer', { score, uid: peer.uid, add: false });
+							other.peers = other.peers.filter(uid => uid !== peer.uid);
+						}
+					} else {
+						if (!peer.peers.includes(other.uid)) {
+							this.link.send(peer.ws, 'togglePeer', { score, uid: other.uid, add: true });
+							peer.peers.push(other.uid);
+						}
+						if (!other.peers.includes(peer.uid)) {
+							this.link.send(other.ws, 'togglePeer', { score, uid: peer.uid, add: true });
+							other.peers.push(peer.uid);
+						}
+					}
+				} catch (error) {
+					console.error('Failed to send togglePeer to peer:', error);
 				}
-				if (peer.uid === other.uid) return { other, score: null };
-				console.log(`Comparing audio packets between:`, peer, other);
-				const score = await this._compare(
-					this.link.getSocket(peer.uid),
-					this.link.getSocket(other.uid)
-				);
-				testedPairs.add(
-					[peer.uid, other.uid].sort().join('-')
-				);
-				return { other, score };
-			}));
-			console.log(`Scores for peers ${peer.uid}, :`, scores.map(s => ({ other: s.other.uid, score: s.score })));
-
-			for (const { other, score } of scores) {
-				if (score === null || score === undefined) continue;
-				// if (score >= MIN_SCORE) {
-				this.link.send(peer.ws, 'colocation', { score, peer: other.uid });
-				this.link.send(other.ws, 'colocation', { score, peer: peer.uid });
-				// }
-			}
+				return { peer, other, score };
+			})));
+			const scores = (await Promise.all(promises.flat(1)));
 		}
 		
 		setTimeout(() => this.discover(), 5_000);
@@ -109,8 +132,11 @@ export class WebSocketServer extends DurableObject {
 			this.link.request(client1Ws, 'audioRequest', { }),
 			this.link.request(client2Ws, 'audioRequest', { }),
 		]);
-
-		if (Math.abs(res1.fields.ts - res2.fields.ts) > 2000) {
+		if (!res1 || !res2) {
+			console.log('Failed to get audio packets in time');
+			return;
+		}
+		if (Math.abs(res1.fields.ts - res2.fields.ts) > 2_000) {
 			// audio packets are too far apart in time to be meaningfully compared
 			// this may be because one of the clients wasn't ready when we first requested
 			// try one more time
@@ -131,7 +157,7 @@ export class WebSocketServer extends DurableObject {
 		const oLng = otherAttachment.lng;
 		if (oLat === undefined || oLng === undefined) return Infinity;
 		
-		return Math.sqrt(Math.pow(lat - oLat, 2) + Math.pow(lng - oLng, 2));
+		return Math.sqrt(Math.pow(lat1 - oLat, 2) + Math.pow(lng1 - oLng, 2));
 	}
 	fetch(req) { return this.link.accept(req); }
 	webSocketMessage(ws, data) { return this.link.handleMessage(ws, data); }

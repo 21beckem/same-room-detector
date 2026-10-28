@@ -5,38 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mesh Test with Durable Object Server</title>
     <style>
-.btns-box {
-    display: flex;
-    flex-direction: row;
-    gap: 20px;
-}
-@media (max-width: 720px) {
-    .btns-box {
-        flex-direction: column;
-    }
-}
-.btns-box button {
-    aspect-ratio: 1;
-    width: 100vw;
-    height: 100vh;
-    min-width: 100px;
-    min-height: 100px;
-    max-width: calc(100vw - 20px);
-    max-height: calc(100vh - 500px);
-}
+
     </style>
 </head>
 <body>
     <br>
     <center>
-        <div id="status">...</div>
-        <br>
-        <div class="btns-box">
-            <button id="start-recording-btn">Start Recording</button>
-            <button id="run-btn" disabled>Run</button>
-        </div>
-        <br>
-        <input type="file" id="file-input" onchange="window.file = this.files[0]; console.log('Selected file:', window.file.name, 'Access with window.file');">
+        <br><br>
+        <button id="start-btn" style="padding: 10px 20px; font-size: 16px;">Start</button>
+        <br><br>
+        <div id="status"></div>
     </center>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
