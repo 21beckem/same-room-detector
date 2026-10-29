@@ -10,6 +10,9 @@
   "devDependencies": {
     "wrangler": "^4.151.2"
   },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "dependencies": {
     "@assemblyscript/loader": "^0.28.20"
   }
