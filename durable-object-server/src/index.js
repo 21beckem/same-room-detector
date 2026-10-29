@@ -17,6 +17,7 @@ export class WebSocketServer extends DurableObject {
 		this.geoGrid = new Map(); // key: `${lat}_${lng}`, value: Set of uid
 
 		this.link.on('socket:open', ({ ws, uid }) => this._registerNewClient(ws, uid));
+		this.link.on('socket:close', ({ ws, uid }) => this._unregisterClient(ws, uid));
 
 		this.link.handle('ready', (msg, ctx) => {
 			const { lat, lng } = msg.fields;
@@ -46,6 +47,30 @@ export class WebSocketServer extends DurableObject {
 	_registerNewClient(ws, uid) {
 		const { ip } = this.link.getAttachment(ws);
 		console.log(`Client ${uid} connected from IP ${ip}`);
+	}
+	_unregisterClient(ws, uid) {
+		// remove from geoGrid
+		for (const [key, uids] of this.geoGrid.entries()) {
+			if (uids.has(uid)) {
+				uids.delete(uid);
+				if (uids.size === 0) {
+					this.geoGrid.delete(key);
+				}
+			}
+		}
+
+		// remove from peers of other attachments
+		for (const s of this.link.sockets) {
+			const attachment = this.link.getAttachment(s.ws);
+			if (attachment && attachment.peers) {
+				const index = attachment.peers.indexOf(uid);
+				if (index !== -1) {
+					attachment.peers.splice(index, 1);
+					this.link.updateAttachment(s.ws, { peers: attachment.peers });
+					this.link.send(s.ws, 'togglePeer', { score: null, uid, add: false });
+				}
+			}
+		}
 	}
 	_getGridKey(lat, lng) {
 		const latKey = Math.round(lat * 100) / 100;
