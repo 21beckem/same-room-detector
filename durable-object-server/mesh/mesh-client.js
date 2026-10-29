@@ -3,7 +3,7 @@ import { ProtocolClient } from '../src/protocol/client.js';
 import { Geo } from './geo.js';
 import { Emitter } from './emitter.js';
 const isHostedLocally = (/(localhost)|(\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)/gm).test(window.location.hostname);
-const WebSocketServerUri = isHostedLocally ? `ws://${location.hostname}:8787` : 'wss://colocation.beckersuite.com';
+const WebSocketServerUri = isHostedLocally ? `ws://${location.hostname}:8787` : 'wss://same-room-detector.beckersuite.com';
 
 const keepAlive = (() => {
     const keepAwake = new NoSleep();

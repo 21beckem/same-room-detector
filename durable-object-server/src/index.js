@@ -122,7 +122,7 @@ export class WebSocketServer extends DurableObject {
 				}
 				return { peer, other, score };
 			})));
-			const scores = (await Promise.all(promises.flat(1)));
+			await Promise.all(promises.flat(1));
 		}
 		
 		setTimeout(() => this.discover(), 5_000);
@@ -133,7 +133,7 @@ export class WebSocketServer extends DurableObject {
 			this.link.request(client2Ws, 'audioRequest', { }),
 		]);
 		if (!res1 || !res2) {
-			console.log('Failed to get audio packets in time');
+			console.error('Failed to get audio packets in time');
 			return;
 		}
 		if (Math.abs(res1.fields.ts - res2.fields.ts) > 2_000) {
