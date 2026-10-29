@@ -217,8 +217,9 @@ export class ProtocolServer extends Router {
     } catch {
       return;
     }
+    const uid = ep.uid;
     ep.closeAll();
-    await ep.emit('socket:close', { code, reason, wasClean });
+    await ep.emit('socket:close', { code, reason, wasClean, uid });
   }
 
   /** Call from webSocketError(). */

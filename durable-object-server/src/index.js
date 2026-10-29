@@ -17,7 +17,7 @@ export class WebSocketServer extends DurableObject {
 		this.geoGrid = new Map(); // key: `${lat}_${lng}`, value: Set of uid
 
 		this.link.on('socket:open', ({ ws, uid }) => this._registerNewClient(ws, uid));
-		this.link.on('socket:close', ({ ws, uid }) => this._unregisterClient(ws, uid));
+		this.link.on('socket:close', ({ uid }) => this._unregisterClient(uid));
 
 		this.link.handle('ready', (msg, ctx) => {
 			const { lat, lng } = msg.fields;
@@ -48,7 +48,8 @@ export class WebSocketServer extends DurableObject {
 		const { ip } = this.link.getAttachment(ws);
 		console.log(`Client ${uid} connected from IP ${ip}`);
 	}
-	_unregisterClient(ws, uid) {
+	_unregisterClient(uid) {
+		console.log(`Client ${uid} disconnected`);
 		// remove from geoGrid
 		for (const [key, uids] of this.geoGrid.entries()) {
 			if (uids.has(uid)) {
@@ -67,7 +68,7 @@ export class WebSocketServer extends DurableObject {
 				if (index !== -1) {
 					attachment.peers.splice(index, 1);
 					this.link.updateAttachment(s.ws, { peers: attachment.peers });
-					this.link.send(s.ws, 'togglePeer', { score: null, uid, add: false });
+					this.link.send(s.ws, 'togglePeer', { score: 0, uid, add: false });
 				}
 			}
 		}

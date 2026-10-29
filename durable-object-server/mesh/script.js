@@ -165,8 +165,6 @@ form.addEventListener('submit', async (event) => {
         $('local-icon').replaceChildren(icon(deviceType).firstElementChild);
         $('setup').hidden = true;
         $('dashboard').hidden = false;
-        $('dashboard-title').setAttribute('tabindex', '-1');
-        $('dashboard-title').focus();
         log(`Search started as ${deviceName}. Listening for a shared signal.`);
         renderPeers();
         mesh.peers.forEach(identify);
