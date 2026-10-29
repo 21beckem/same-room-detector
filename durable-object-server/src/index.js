@@ -4,6 +4,7 @@ import { ProtocolServer } from './protocol/server.js';
 import modelJson from './model.json' with { type: 'json' };
 
 const MIN_SCORE = 0.6;
+const DISCOVERY_INTERVAL_MS = 3_000;
 
 export class WebSocketServer extends DurableObject {
 	constructor(state, env) {
@@ -93,6 +94,9 @@ export class WebSocketServer extends DurableObject {
 		}
 		return allSockets.filter(s => closeUids.includes(s.uid));
 	}
+	_scheduleDiscovery() {
+		setTimeout(() => this.discover(), DISCOVERY_INTERVAL_MS);
+	}
 	async discover() {
 		const attachments = this.link.sockets.map((s) => ({
 			uid: s.uid,
@@ -102,8 +106,7 @@ export class WebSocketServer extends DurableObject {
 		const readyPeers = attachments.filter((p) => p.ready);
 		console.log(`Found ${readyPeers.length} ready peers for colocation discovery`);
 		if (readyPeers.length < 2) {
-			setTimeout(() => this.discover(), 5_000);
-			return;
+			return this._scheduleDiscovery();
 		}
 
 		const testedPairs = new Set();
@@ -168,7 +171,7 @@ export class WebSocketServer extends DurableObject {
 			this.link.updateAttachment(peer.ws, { peers: peer.peers });
 		}
 
-		setTimeout(() => this.discover(), 5_000);
+		return this._scheduleDiscovery();
 	}
 	async _compare(client1Ws, client2Ws) {
 		let [res1, res2] = await Promise.all([
@@ -188,7 +191,7 @@ export class WebSocketServer extends DurableObject {
 				this.link.request(client2Ws, 'audioRequest', { }),
 			]);
 			if (Math.abs(res1.fields.ts - res2.fields.ts) > 2000) {
-				console.log('Audio packets are too far apart in time');
+				console.error('Audio packets are too far apart in time');
 				return;
 			}
 		}
