@@ -167,6 +167,9 @@ export class WebSocketServer extends DurableObject {
 
 export default {
 	async fetch(request, env) {
+		if (request.url.endsWith('/health')) {
+			return new Response('OK', { status: 200 });
+		}
 		const url = new URL(request.url);
 		const id = env.MY_DURABLE_OBJECT.idFromName(url.pathname || '/');
 		return env.MY_DURABLE_OBJECT.get(id).fetch(request);
