@@ -56,6 +56,9 @@ export const schema = {
     // client -> server ready with its current location
     ready: { fields: { lat: 'f64', lng: 'f64' }, reply: 'acknowledged' },
 
+    // client <--> server: "broadcast this, please", "here's a broadcast"
+    broadcast: { fields: { message: 'json' }, reply: 'acknowledged' },
+
     // server -> client: add/remove nearby peer
     togglePeer: { fields: { uid: 'uid', add: 'bool', score: 'f32' } },
 

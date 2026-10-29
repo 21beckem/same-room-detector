@@ -5,17 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mesh Test with Durable Object Server</title>
     <style>
-
+body { font-family: system-ui, sans-serif; margin: 2rem; }
+main { max-width: 50rem; margin: 0 auto; }
+#connection-status { font-weight: 600; margin: 1rem 0; }
+#status { min-height: 1.5rem; }
+#event-log {
+    background: #111;
+    color: #b8f7c1;
+    min-height: 12rem;
+    padding: 1rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    max-height: 40vh;
+}
     </style>
 </head>
 <body>
     <br>
-    <center>
+    <main>
         <br><br>
-        <button id="start-btn" style="padding: 10px 20px; font-size: 16px;">Start</button>
+        <button id="start-btn" style="padding: 10px 20px; font-size: 16px;">Start</button> &nbsp; <button id="broadcast-btn" style="padding: 10px 20px; font-size: 16px;" disabled>Broadcast</button>
         <br><br>
+        <div id="connection-status">Connecting to mesh server…</div>
         <div id="status"></div>
-    </center>
+        <h2>Event log</h2>
+        <pre id="event-log" aria-live="polite"></pre>
+    </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>

@@ -160,11 +160,11 @@ export class ProtocolServer extends Router {
   }
 
   /**
-   * Send to every connected client.
-   * @param {{ except?: number|WebSocket|Array<number|WebSocket> }} [opts]
+   * Send to every connected client if `to` is not specified, otherwise only to the clients listed in `to`.
+   * @param {{ to?:Array<number|WebSocket>, except?: number|WebSocket|Array<number|WebSocket> }} [opts]
    * @returns {number} how many clients it was sent to
    */
-  broadcast(type, fields = {}, payload, { except } = {}) {
+  broadcast(type, fields = {}, payload, { to=null, except } = {}) {
     const skip = new Set([].concat(except ?? []).map((x) => (typeof x === 'number' ? x : this._endpoint(x).uid)));
     const def = this.codec.def(type);
     // With no `ts` fields every client gets identical bytes, so encode just once.
@@ -178,6 +178,7 @@ export class ProtocolServer extends Router {
         continue;
       }
       if (ep.closed || skip.has(ep.uid)) continue;
+      if (to && !to.includes(ep.uid)) continue;
       try {
         if (shared) ep.sendEncoded(shared);
         else ep.send(type, fields, payload);

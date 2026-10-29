@@ -32,6 +32,15 @@ export class WebSocketServer extends DurableObject {
 			});
 		});
 
+		this.link.handle('broadcast', (msg, ctx) => {
+			const { message } = msg.fields;
+			const sender = this.link.getSocket(ctx.uid);
+			if (!sender) return;
+			const senderAttachment = this.link.getAttachment(sender);
+			if (!senderAttachment || !senderAttachment.ready || !senderAttachment.peers.length) return;
+			this.link.broadcast('broadcast', { message }, null, { to: senderAttachment.peers });
+		});
+
 		this.discover();
 	}
 	_registerNewClient(ws, uid) {
@@ -64,7 +73,6 @@ export class WebSocketServer extends DurableObject {
 			ws: s.ws,
 			...this.link.getAttachment(s.ws),
 		}));
-		console.log(`Discovered ${attachments.length} attachments`);
 		const readyPeers = attachments.filter((p) => p.ready);
 		console.log(`Found ${readyPeers.length} ready peers for colocation discovery`);
 		if (readyPeers.length < 2) {
@@ -77,6 +85,7 @@ export class WebSocketServer extends DurableObject {
 		const markTested = (uid1, uid2) => testedPairs.add([uid1, uid2].sort().join('-'));
 
 		const promises = [];
+		const peersToUpdate = [];
 
 		for (const peer of readyPeers) {
 			const possibleNeighbors = this._findPossibleNeighbors(peer.gridKey, readyPeers);
@@ -102,19 +111,23 @@ export class WebSocketServer extends DurableObject {
 						if (peer.peers.includes(other.uid)) {
 							this.link.send(peer.ws, 'togglePeer', { score, uid: other.uid, add: false });
 							peer.peers = peer.peers.filter(uid => uid !== other.uid);
+							peersToUpdate.push(peer);
 						}
 						if (other.peers.includes(peer.uid)) {
 							this.link.send(other.ws, 'togglePeer', { score, uid: peer.uid, add: false });
 							other.peers = other.peers.filter(uid => uid !== peer.uid);
+							peersToUpdate.push(other);
 						}
 					} else {
 						if (!peer.peers.includes(other.uid)) {
 							this.link.send(peer.ws, 'togglePeer', { score, uid: other.uid, add: true });
 							peer.peers.push(other.uid);
+							peersToUpdate.push(peer);
 						}
 						if (!other.peers.includes(peer.uid)) {
 							this.link.send(other.ws, 'togglePeer', { score, uid: peer.uid, add: true });
 							other.peers.push(peer.uid);
+							peersToUpdate.push(other);
 						}
 					}
 				} catch (error) {
@@ -125,6 +138,10 @@ export class WebSocketServer extends DurableObject {
 			await Promise.all(promises.flat(1));
 		}
 		
+		for (const peer of peersToUpdate) {
+			this.link.updateAttachment(peer.ws, { peers: peer.peers });
+		}
+
 		setTimeout(() => this.discover(), 5_000);
 	}
 	async _compare(client1Ws, client2Ws) {

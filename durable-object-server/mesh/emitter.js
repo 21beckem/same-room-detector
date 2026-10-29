@@ -25,9 +25,11 @@ export class Emitter {
         });
     }
 
-    emit(event, data) {
+    emit(event, ...args) {
         if (this.listeners[event]) {
-            this.listeners[event].forEach(callback => callback(data));
+            // Copy the listener list so a listener can unsubscribe itself while
+            // an event is being delivered without changing this dispatch.
+            [...this.listeners[event]].forEach(callback => callback(...args));
         }
     }
 }

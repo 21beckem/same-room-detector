@@ -94,10 +94,10 @@ export class ProtocolClient extends Router {
     }
   }
   
-  relayMsg(peer, msg) {
+  relayMsg(peer, msg, options = {}) {
     if (typeof msg !== 'object' || msg === null) throw new TypeError('msg must be an object');
     const arr = textEncoder.encode(JSON.stringify(msg));
-    return this.relay(peer, arr, { isMsg: true });
+    return this.relay(peer, arr, { ...options, isMsg: true });
   }
 
   async relay(peer, data, { meta, chunkSize = 512 * 1024, timeout = 30_000, isMsg = false } = {}) {
