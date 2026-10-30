@@ -1,3 +1,0 @@
-[submodule "mesh-peer-server"]
-	path = mesh-peer-server
-	url = https://github.com/21beckem/mesh-peer-server.git
