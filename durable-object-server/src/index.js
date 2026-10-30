@@ -6,6 +6,22 @@ import modelJson from './model.json' with { type: 'json' };
 const MIN_SCORE = 0.6;
 const DISCOVERY_INTERVAL_MS = 3_000;
 
+function withTimeout(asyncPromise, ms) {
+	let timeoutId;
+
+	// 1. Create a promise that rejects after the specified time
+	const timeoutPromise = new Promise((_, reject) => {
+		timeoutId = setTimeout(() => {
+			reject(new Error(`Operation timed out after ${ms}ms`));
+		}, ms);
+	});
+
+	// 2. Race the tasks; clean up the timer if the main task wins
+	return Promise.race([asyncPromise, timeoutPromise]).finally(() => {
+		clearTimeout(timeoutId); // Prevents memory leaks by clearing the timer
+	});
+}
+
 export class WebSocketServer extends DurableObject {
 	constructor(state, env) {
 		super(state, env);
@@ -94,84 +110,85 @@ export class WebSocketServer extends DurableObject {
 		}
 		return allSockets.filter(s => closeUids.includes(s.uid));
 	}
-	_scheduleDiscovery() {
-		setTimeout(() => this.discover(), DISCOVERY_INTERVAL_MS);
-	}
 	async discover() {
-		const attachments = this.link.sockets.map((s) => ({
-			uid: s.uid,
-			ws: s.ws,
-			...this.link.getAttachment(s.ws),
-		}));
-		const readyPeers = attachments.filter((p) => p.ready);
-		console.log(`Found ${readyPeers.length} ready peers for colocation discovery`);
-		if (readyPeers.length < 2) {
-			return this._scheduleDiscovery();
-		}
-
-		const testedPairs = new Set();
-		const beenTested = (uid1, uid2) => testedPairs.has([uid1, uid2].sort().join('-'));
-		const markTested = (uid1, uid2) => testedPairs.add([uid1, uid2].sort().join('-'));
-
-		const promises = [];
-		const peersToUpdate = [];
-
-		for (const peer of readyPeers) {
-			const possibleNeighbors = this._findPossibleNeighbors(peer.gridKey, readyPeers);
-			
-			promises.push(Promise.all(possibleNeighbors.map(async (other) => {
-				const { score } = await (async()=>{
-					if (peer.uid === other.uid) return { other, score: null };
-					if (beenTested(peer.uid, other.uid)) {
-						return { other, score: null };
-					}
-					console.log(`Comparing audio packets between:`, peer.uid, other.uid);
-					markTested(peer.uid, other.uid);
-					const score = await this._compare(
-						this.link.getSocket(peer.uid),
-						this.link.getSocket(other.uid)
-					);
-					return { other, score };
-				})();
+		try {
+			const attachments = this.link.sockets.map((s) => ({
+				uid: s.uid,
+				ws: s.ws,
+				...this.link.getAttachment(s.ws),
+			}));
+			const readyPeers = attachments.filter((p) => p.ready);
+			console.log(`Found ${readyPeers.length} ready peers for colocation discovery`);
+			if (readyPeers.length < 2) return;
+	
+			const testedPairs = new Set();
+			const beenTested = (uid1, uid2) => testedPairs.has([uid1, uid2].sort().join('-'));
+			const markTested = (uid1, uid2) => testedPairs.add([uid1, uid2].sort().join('-'));
+	
+			const promises = [];
+			const peersToUpdate = [];
+	
+			for (const peer of readyPeers) {
+				const possibleNeighbors = this._findPossibleNeighbors(peer.gridKey, readyPeers);
 				
-				try {
-					if (score === null || score === undefined) return;
-					if (score < MIN_SCORE) {
-						if (peer.peers.includes(other.uid)) {
-							this.link.send(peer.ws, 'togglePeer', { score, uid: other.uid, add: false });
-							peer.peers = peer.peers.filter(uid => uid !== other.uid);
-							peersToUpdate.push(peer);
+				promises.push(Promise.all(possibleNeighbors.map(async (other) => {
+					const { score } = await withTimeout(
+						(async()=>{
+							if (peer.uid === other.uid) return { other, score: null };
+							if (beenTested(peer.uid, other.uid)) {
+								return { other, score: null };
+							}
+							console.log(`Comparing audio packets between:`, peer.uid, other.uid);
+							markTested(peer.uid, other.uid);
+							const score = await this._compare(
+								this.link.getSocket(peer.uid),
+								this.link.getSocket(other.uid)
+							);
+							return { other, score };
+						})()
+					, 8_000);
+					
+					try {
+						if (score === null || score === undefined) return;
+						if (score < MIN_SCORE) {
+							if (peer.peers.includes(other.uid)) {
+								this.link.send(peer.ws, 'togglePeer', { score, uid: other.uid, add: false });
+								peer.peers = peer.peers.filter(uid => uid !== other.uid);
+								peersToUpdate.push(peer);
+							}
+							if (other.peers.includes(peer.uid)) {
+								this.link.send(other.ws, 'togglePeer', { score, uid: peer.uid, add: false });
+								other.peers = other.peers.filter(uid => uid !== peer.uid);
+								peersToUpdate.push(other);
+							}
+						} else {
+							if (!peer.peers.includes(other.uid)) {
+								this.link.send(peer.ws, 'togglePeer', { score, uid: other.uid, add: true });
+								peer.peers.push(other.uid);
+								peersToUpdate.push(peer);
+							}
+							if (!other.peers.includes(peer.uid)) {
+								this.link.send(other.ws, 'togglePeer', { score, uid: peer.uid, add: true });
+								other.peers.push(peer.uid);
+								peersToUpdate.push(other);
+							}
 						}
-						if (other.peers.includes(peer.uid)) {
-							this.link.send(other.ws, 'togglePeer', { score, uid: peer.uid, add: false });
-							other.peers = other.peers.filter(uid => uid !== peer.uid);
-							peersToUpdate.push(other);
-						}
-					} else {
-						if (!peer.peers.includes(other.uid)) {
-							this.link.send(peer.ws, 'togglePeer', { score, uid: other.uid, add: true });
-							peer.peers.push(other.uid);
-							peersToUpdate.push(peer);
-						}
-						if (!other.peers.includes(peer.uid)) {
-							this.link.send(other.ws, 'togglePeer', { score, uid: peer.uid, add: true });
-							other.peers.push(peer.uid);
-							peersToUpdate.push(other);
-						}
+					} catch (error) {
+						console.error('Failed to send togglePeer to peer:', error);
 					}
-				} catch (error) {
-					console.error('Failed to send togglePeer to peer:', error);
-				}
-				return { peer, other, score };
-			})));
-			await Promise.all(promises.flat(1));
+					return { peer, other, score };
+				})));
+				await Promise.all(promises.flat(1));
+			}
+			
+			for (const peer of peersToUpdate) {
+				this.link.updateAttachment(peer.ws, { peers: peer.peers });
+			}
+		} catch(err) {
+			console.error('Error in discovery:', err);
+		} finally {
+			setTimeout(() => this.discover(), DISCOVERY_INTERVAL_MS);
 		}
-		
-		for (const peer of peersToUpdate) {
-			this.link.updateAttachment(peer.ws, { peers: peer.peers });
-		}
-
-		return this._scheduleDiscovery();
 	}
 	async _compare(client1Ws, client2Ws) {
 		let [res1, res2] = await Promise.all([

@@ -210,7 +210,6 @@ async function initialize() {
             startButton.disabled = true;
             for (const uid of handshakes.keys()) stopHandshake(uid);
             peers.clear();
-            $('scan-label').textContent = 'OFFLINE';
             $('status').textContent = 'Connection lost. Reload this page to reconnect.';
             setupStatus('Connection lost. Reload this page to reconnect.', true);
             log('Server disconnected. Reload the page to reconnect.', true);
